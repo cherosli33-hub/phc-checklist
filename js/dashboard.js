@@ -7,11 +7,16 @@ const todayRecords=records.filter(record=>record.date===today);
 const completed=new Set(todayRecords.map(record=>`${record.bag}-${record.shift}`));
 const expected=[...SHIFTS.map(shift=>`PHC 1-${shift}`),...SHIFTS.map(shift=>`PHC 2-${shift}`)];
 const next=expected.find(key=>!completed.has(key));
-const lowItems=records.flatMap(record=>recordLowItems(record).map(item=>({...item,bag:record.bag,shift:record.shift,date:record.date})));
+const latestInventoryRecords=["PHC 1","PHC 2"].map(bag=>records
+  .filter(record=>record.bag===bag&&record.quantities&&Object.keys(record.quantities).length)
+  .sort((a,b)=>recordTimestamp(b)-recordTimestamp(a))[0]
+).filter(Boolean);
+const lowItems=latestInventoryRecords.flatMap(record=>recordLowItems(record).map(item=>({...item,bag:record.bag,shift:record.shift,date:record.date})));
 const restockModal=document.querySelector("#restockModal");
 const weekDays=getWeekDays();
 const shortDay=["Isn","Sel","Rab","Kha","Jum","Sab","Ahd"];
 
+function recordTimestamp(record){ return new Date(`${record.date}T${record.time||"00:00"}`).getTime()||0; }
 function statusIcon(done){ return `<span class="state-dot ${done?"done":"missing"}">${done?"✓":"×"}</span>`; }
 function bagCard(bag){ return `<article class="card bag-card"><div class="bag-title"><span class="bag-badge">▣</span><h3>Beg ${bag}</h3></div><div class="shift-list">${SHIFTS.map(shift=>`<div class="shift-row"><span>${shift}</span>${statusIcon(completed.has(`${bag}-${shift}`))}</div>`).join("")}</div></article>`; }
 function weekStatus(date){ const dateKey=isoDate(date); const count=records.filter(record=>record.date===dateKey).length; if(date>now) return "pending"; return count>0?"done":"missing"; }
