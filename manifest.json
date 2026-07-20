@@ -1,0 +1,15 @@
+{
+  "name": "PHC Checklist — Hospital Kuala Lipis",
+  "short_name": "PHC Checklist",
+  "description": "Prototype inventori dan pemeriksaan Beg Pre Hospital Care",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f7f8",
+  "theme_color": "#c8102e",
+  "orientation": "portrait-primary",
+  "icons": [
+    {"src":"assets/icon192.png","sizes":"1254x1254","type":"image/png","purpose":"any maskable"},
+    {"src":"assets/icon512.png","sizes":"1254x1254","type":"image/png","purpose":"any maskable"}
+  ]
+}
