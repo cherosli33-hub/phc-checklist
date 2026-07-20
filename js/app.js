@@ -24,6 +24,7 @@ export const CATEGORIES = [
 
 export const SHIFTS = ["Pagi","Petang","Malam"];
 export const STORAGE_KEY = "phcPrototypeRecords";
+export const LATEST_INVENTORY_KEY = "phcLatestInventory";
 
 export function categoriesForBag(bag){ return CATEGORIES.filter(category => bag === "PHC 1" || !category.phc1Only); }
 export function startOfWeek(input=new Date()){ const d=new Date(input); const day=d.getDay() || 7; d.setHours(0,0,0,0); d.setDate(d.getDate()-day+1); return d; }
@@ -31,6 +32,8 @@ export function isoDate(date){ const y=date.getFullYear(); const m=String(date.g
 export function formatDate(date, options={weekday:"long",day:"numeric",month:"long",year:"numeric"}){ return new Intl.DateTimeFormat("ms-MY",options).format(date); }
 export function loadRecords(){ try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; } }
 export function saveRecords(records){ localStorage.setItem(STORAGE_KEY,JSON.stringify(records)); }
+export function loadLatestInventory(){ try { return JSON.parse(localStorage.getItem(LATEST_INVENTORY_KEY)) || {}; } catch { return {}; } }
+export function saveLatestInventory(record){ const latest=loadLatestInventory(); latest[record.bag]=record; localStorage.setItem(LATEST_INVENTORY_KEY,JSON.stringify(latest)); }
 export function getWeekDays(){ const monday=startOfWeek(); return Array.from({length:7},(_,i)=>{ const d=new Date(monday); d.setDate(monday.getDate()+i); return d; }); }
 export function recordLowItems(record){ if(!record?.quantities) return []; return Object.values(record.quantities).flatMap(category => category.items || []).filter(item => item.qty < item.standard); }
 
@@ -44,5 +47,10 @@ export function seedDemoRecords(){
   ]; saveRecords(demo); return demo;
 }
 
-export function registerServiceWorker(){ if(typeof navigator!=="undefined" && "serviceWorker" in navigator && location.protocol!=="file:") window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{})); }
+export function registerServiceWorker(){
+  if(typeof navigator==="undefined"||!("serviceWorker" in navigator)||location.protocol==="file:") return;
+  let refreshing=false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(!refreshing){ refreshing=true; location.reload(); } });
+  window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js",{updateViaCache:"none"}).then(registration=>registration.update()).catch(()=>{}));
+}
 registerServiceWorker();

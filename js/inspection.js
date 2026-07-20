@@ -1,4 +1,4 @@
-import { categoriesForBag, isoDate, loadRecords, saveRecords } from "./app.js";
+import { categoriesForBag, isoDate, loadRecords, saveRecords, saveLatestInventory } from "./app.js";
 
 const root=document.querySelector("#inspectionApp");
 const title=document.querySelector("#inspectionTitle");
@@ -37,7 +37,7 @@ root.addEventListener("click",event=>{
   if(event.target.closest("#previousStep")){ if(state.categoryIndex===0){ state.stage="setup"; } else state.categoryIndex--; render(); return; }
   if(event.target.closest("#nextStep")){ const total=categoriesForBag(state.bag).length; if(state.categoryIndex<total-1) state.categoryIndex++; else state.stage="review"; render(); return; }
   if(event.target.closest("#editChecklist")){ state.notes=document.querySelector("#notes")?.value||""; state.stage="category"; render(); return; }
-  if(event.target.closest("#saveInspection")){ state.notes=document.querySelector("#notes")?.value.trim()||""; const now=new Date(); const record={id:`local-${now.getTime()}`,date:isoDate(now),time:new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:false}).format(now),bag:state.bag,shift:state.shift,ppp:state.ppp,notes:state.notes,quantities:state.quantities,prototype:true}; const records=loadRecords(); records.unshift(record); saveRecords(records); state.stage="success"; render(); }
+  if(event.target.closest("#saveInspection")){ state.notes=document.querySelector("#notes")?.value.trim()||""; const now=new Date(); const record={id:`local-${now.getTime()}`,savedAt:now.toISOString(),date:isoDate(now),time:new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:false}).format(now),bag:state.bag,shift:state.shift,ppp:state.ppp,notes:state.notes,quantities:state.quantities,prototype:true}; const records=loadRecords(); records.unshift(record); saveRecords(records); saveLatestInventory(record); state.stage="success"; render(); }
 });
 
 render();

@@ -1,4 +1,4 @@
-import { SHIFTS, formatDate, getWeekDays, isoDate, seedDemoRecords, recordLowItems } from "./app.js";
+import { SHIFTS, formatDate, getWeekDays, isoDate, seedDemoRecords, recordLowItems, loadLatestInventory } from "./app.js";
 
 const content=document.querySelector("#dashboardContent");
 const records=seedDemoRecords();
@@ -7,7 +7,8 @@ const todayRecords=records.filter(record=>record.date===today);
 const completed=new Set(todayRecords.map(record=>`${record.bag}-${record.shift}`));
 const expected=[...SHIFTS.map(shift=>`PHC 1-${shift}`),...SHIFTS.map(shift=>`PHC 2-${shift}`)];
 const next=expected.find(key=>!completed.has(key));
-const latestInventoryRecords=["PHC 1","PHC 2"].map(bag=>records
+const savedLatestInventory=loadLatestInventory();
+const latestInventoryRecords=["PHC 1","PHC 2"].map(bag=>savedLatestInventory[bag]||records
   .filter(record=>record.bag===bag&&record.quantities&&Object.keys(record.quantities).length)
   .sort((a,b)=>recordTimestamp(b)-recordTimestamp(a))[0]
 ).filter(Boolean);
@@ -16,7 +17,7 @@ const restockModal=document.querySelector("#restockModal");
 const weekDays=getWeekDays();
 const shortDay=["Isn","Sel","Rab","Kha","Jum","Sab","Ahd"];
 
-function recordTimestamp(record){ return new Date(`${record.date}T${record.time||"00:00"}`).getTime()||0; }
+function recordTimestamp(record){ return new Date(record.savedAt||`${record.date}T${record.time||"00:00"}`).getTime()||0; }
 function statusIcon(done){ return `<span class="state-dot ${done?"done":"missing"}">${done?"✓":"×"}</span>`; }
 function bagCard(bag){ return `<article class="card bag-card"><div class="bag-title"><span class="bag-badge">▣</span><h3>Beg ${bag}</h3></div><div class="shift-list">${SHIFTS.map(shift=>`<div class="shift-row"><span>${shift}</span>${statusIcon(completed.has(`${bag}-${shift}`))}</div>`).join("")}</div></article>`; }
 function weekStatus(date){ const dateKey=isoDate(date); const count=records.filter(record=>record.date===dateKey).length; if(date>now) return "pending"; return count>0?"done":"missing"; }
@@ -38,3 +39,4 @@ document.querySelector("#restockButton").addEventListener("click",()=>{
   restockModal.innerHTML=`<section class="modal" role="dialog" aria-modal="true" aria-label="Item perlu restock"><div class="modal-handle"></div><div class="modal-head"><div><p class="eyebrow">AMARAN STOK</p><h2>Item Perlu Restock</h2></div><button class="modal-close" aria-label="Tutup">×</button></div><div class="restock-table"><div class="restock-table-head"><span>Item</span><span>Beg & shift</span><span>Qty</span></div>${lowItems.map(item=>`<div class="restock-table-row"><span><strong>${item.name}</strong><small>Standard ${item.standard}</small></span><span><b>${item.bag}</b><small>${item.shift}</small></span><span class="restock-qty">${item.qty}/${item.standard}</span></div>`).join("")}</div></section>`;
 });
 restockModal.addEventListener("click",event=>{ if(event.target===restockModal||event.target.closest(".modal-close")) restockModal.hidden=true; });
+window.addEventListener("pageshow",event=>{ if(event.persisted) location.reload(); });
