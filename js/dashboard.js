@@ -7,7 +7,8 @@ const todayRecords=records.filter(record=>record.date===today);
 const completed=new Set(todayRecords.map(record=>`${record.bag}-${record.shift}`));
 const expected=[...SHIFTS.map(shift=>`PHC 1-${shift}`),...SHIFTS.map(shift=>`PHC 2-${shift}`)];
 const next=expected.find(key=>!completed.has(key));
-const lowItems=records.flatMap(recordLowItems);
+const lowItems=records.flatMap(record=>recordLowItems(record).map(item=>({...item,bag:record.bag,shift:record.shift,date:record.date})));
+const restockModal=document.querySelector("#restockModal");
 const weekDays=getWeekDays();
 const shortDay=["Isn","Sel","Rab","Kha","Jum","Sab","Ahd"];
 
@@ -26,4 +27,9 @@ content.innerHTML=`
 
 function updateClock(){ document.querySelector("#liveTime").textContent=new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:true}).format(new Date()); }
 updateClock(); setInterval(updateClock,30000);
-document.querySelector("#restockButton").addEventListener("click",()=>{ if(!lowItems.length){ alert("Tiada item perlu restock dalam data prototaip."); return; } alert(`Item perlu restock:\n\n${lowItems.map(item=>`• ${item.name} (${item.qty}/${item.standard})`).join("\n")}`); });
+document.querySelector("#restockButton").addEventListener("click",()=>{
+  if(!lowItems.length){ alert("Tiada item perlu restock dalam data prototaip."); return; }
+  restockModal.hidden=false;
+  restockModal.innerHTML=`<section class="modal" role="dialog" aria-modal="true" aria-label="Item perlu restock"><div class="modal-handle"></div><div class="modal-head"><div><p class="eyebrow">AMARAN STOK</p><h2>Item Perlu Restock</h2></div><button class="modal-close" aria-label="Tutup">×</button></div><div class="restock-table"><div class="restock-table-head"><span>Item</span><span>Beg & shift</span><span>Qty</span></div>${lowItems.map(item=>`<div class="restock-table-row"><span><strong>${item.name}</strong><small>Standard ${item.standard}</small></span><span><b>${item.bag}</b><small>${item.shift}</small></span><span class="restock-qty">${item.qty}/${item.standard}</span></div>`).join("")}</div></section>`;
+});
+restockModal.addEventListener("click",event=>{ if(event.target===restockModal||event.target.closest(".modal-close")) restockModal.hidden=true; });
