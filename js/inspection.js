@@ -1,8 +1,9 @@
-import { categoriesForBag, isoDate, loadRecords, saveRecords, saveLatestInventory } from "./app.js";
+import { categoriesForBag, isoDate, loadRecords } from "./app.js";
+import { saveInspection } from "./api.js";
 
 const root=document.querySelector("#inspectionApp");
 const title=document.querySelector("#inspectionTitle");
-const state={stage:"setup",bag:"",ppp:"",shift:"",categoryIndex:0,quantities:{},notes:"",startMode:"new"};
+const state={stage:"setup",bag:"",ppp:"",shift:"",categoryIndex:0,quantities:{},notes:"",startMode:"new",saving:false,saveResult:null};
 
 function toast(message){ const el=document.querySelector("#toast"); el.textContent=message; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),2200); }
 function esc(value=""){ return String(value).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])); }
@@ -25,11 +26,11 @@ function renderReview(){
   title.textContent="Semak & simpan"; const categories=categoriesForBag(state.bag); const lows=categories.flatMap(category=>state.quantities[category.id].items).filter(item=>item.qty<item.standard);
   root.innerHTML=`<section class="setup-panel"><div class="setup-hero"><div class="step-icon">✓</div><p class="eyebrow">SEMAKAN AKHIR</p><h1>Pastikan maklumat betul</h1><p>${lows.length?`${lows.length} item ditanda kurang dan akan muncul dalam alert restock.`:"Semua item memenuhi kuantiti standard."}</p></div><div class="review-list"><div class="review-row"><span>Beg</span><strong>${state.bag}</strong></div><div class="review-row"><span>PPP</span><strong>${esc(state.ppp)}</strong></div><div class="review-row"><span>Shift</span><strong>${state.shift}</strong></div><div class="review-row"><span>Kategori</span><strong>${categories.length} selesai</strong></div><div class="review-row"><span>Item kurang</span><strong style="color:${lows.length?"var(--danger)":"var(--success)"}">${lows.length}</strong></div></div><div class="field" style="margin-top:16px"><label class="field-label" for="notes">Catatan (pilihan)</label><textarea class="notes-input" id="notes" placeholder="Contoh: Stok digunakan semasa kes...">${esc(state.notes)}</textarea></div><div class="inspection-footer"><button class="button secondary" id="editChecklist">← Kembali</button><button class="button primary" id="saveInspection">Simpan pemeriksaan</button></div></section>`;
 }
-function renderSuccess(){ title.textContent="Pemeriksaan selesai"; root.innerHTML=`<section class="card success-panel"><div class="success-check">✓</div><h1>Pemeriksaan berjaya</h1><p>${state.bag} · ${state.shift}<br>Direkod atas nama ${esc(state.ppp)}</p><div class="prototype-warning"><strong>MOD PROTOTAIP</strong><br>Data hanya disimpan pada peranti ini. Tiada data dihantar ke server atau Google Sheet.</div><button class="button primary full" onclick="location.href='index.html'">Kembali ke Dashboard</button></section>`; }
+function renderSuccess(){ const synced=state.saveResult?.synced; title.textContent="Pemeriksaan selesai"; root.innerHTML=`<section class="card success-panel"><div class="success-check">✓</div><h1>Pemeriksaan berjaya</h1><p>${state.bag} · ${state.shift}<br>Direkod atas nama ${esc(state.ppp)}</p><div class="sync-message ${synced?"synced":"pending"}"><strong>${synced?"✓ Tersimpan dalam Google Sheet":"↻ Menunggu sync"}</strong><br>${esc(state.saveResult?.message||"")}</div><button class="button primary full" onclick="location.href='index.html'">Kembali ke Dashboard</button></section>`; }
 
 function render(){ if(state.stage==="setup") renderSetup(); else if(state.stage==="category") renderCategory(); else if(state.stage==="review") renderReview(); else renderSuccess(); window.scrollTo({top:0,behavior:"smooth"}); }
 
-root.addEventListener("click",event=>{
+root.addEventListener("click",async event=>{
   const bag=event.target.closest("[data-bag]"); if(bag){ state.bag=bag.dataset.bag; state.ppp=document.querySelector("#pppName")?.value||state.ppp; render(); return; }
   const shift=event.target.closest("[data-shift]"); if(shift){ state.shift=shift.dataset.shift; state.ppp=document.querySelector("#pppName")?.value||state.ppp; render(); return; }
   const startButton=event.target.closest("[data-start-mode]"); if(startButton){ state.ppp=document.querySelector("#pppName").value.trim(); if(!state.ppp){ document.querySelector("#pppName").focus(); toast("Masukkan nama PPP dahulu."); return; } buildQuantities(startButton.dataset.startMode); state.stage="category"; render(); return; }
@@ -37,7 +38,17 @@ root.addEventListener("click",event=>{
   if(event.target.closest("#previousStep")){ if(state.categoryIndex===0){ state.stage="setup"; } else state.categoryIndex--; render(); return; }
   if(event.target.closest("#nextStep")){ const total=categoriesForBag(state.bag).length; if(state.categoryIndex<total-1) state.categoryIndex++; else state.stage="review"; render(); return; }
   if(event.target.closest("#editChecklist")){ state.notes=document.querySelector("#notes")?.value||""; state.stage="category"; render(); return; }
-  if(event.target.closest("#saveInspection")){ state.notes=document.querySelector("#notes")?.value.trim()||""; const now=new Date(); const record={id:`local-${now.getTime()}`,savedAt:now.toISOString(),date:isoDate(now),time:new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:false}).format(now),bag:state.bag,shift:state.shift,ppp:state.ppp,notes:state.notes,quantities:state.quantities,prototype:true}; const records=loadRecords(); records.unshift(record); saveRecords(records); saveLatestInventory(record); state.stage="success"; render(); }
+  if(event.target.closest("#saveInspection")){ await saveCurrentInspection(); }
 });
+
+async function saveCurrentInspection(){
+  if(state.saving) return;
+  state.notes=document.querySelector("#notes")?.value.trim()||"";
+  const now=new Date(); const button=document.querySelector("#saveInspection");
+  const record={id:`PHC-${now.getTime()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(16)}`,checkKey:`${isoDate(now)}|${state.bag}|${state.shift}`,savedAt:now.toISOString(),date:isoDate(now),time:new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:false}).format(now),bag:state.bag,shift:state.shift,ppp:state.ppp,notes:state.notes,quantities:state.quantities};
+  state.saving=true; if(button){ button.disabled=true; button.textContent="Menyimpan..."; }
+  state.saveResult=await saveInspection(record);
+  state.saving=false; state.stage="success"; render();
+}
 
 render();

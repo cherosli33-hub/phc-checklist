@@ -1,7 +1,7 @@
 {
   "name": "PHC Checklist — Hospital Kuala Lipis",
   "short_name": "PHC Checklist",
-  "description": "Prototype inventori dan pemeriksaan Beg Pre Hospital Care",
+  "description": "Sistem inventori dan pemeriksaan Beg Pre Hospital Care Hospital Kuala Lipis",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

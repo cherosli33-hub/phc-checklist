@@ -23,8 +23,9 @@ export const CATEGORIES = [
 ];
 
 export const SHIFTS = ["Pagi","Petang","Malam"];
-export const STORAGE_KEY = "phcPrototypeRecords";
-export const LATEST_INVENTORY_KEY = "phcLatestInventory";
+export const STORAGE_KEY = "phcProductionRecords";
+export const LATEST_INVENTORY_KEY = "phcProductionLatestInventory";
+export const PENDING_SYNC_KEY = "phcPendingSync";
 
 export function categoriesForBag(bag){ return CATEGORIES.filter(category => bag === "PHC 1" || !category.phc1Only); }
 export function startOfWeek(input=new Date()){ const d=new Date(input); const day=d.getDay() || 7; d.setHours(0,0,0,0); d.setDate(d.getDate()-day+1); return d; }
@@ -32,20 +33,13 @@ export function isoDate(date){ const y=date.getFullYear(); const m=String(date.g
 export function formatDate(date, options={weekday:"long",day:"numeric",month:"long",year:"numeric"}){ return new Intl.DateTimeFormat("ms-MY",options).format(date); }
 export function loadRecords(){ try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; } }
 export function saveRecords(records){ localStorage.setItem(STORAGE_KEY,JSON.stringify(records)); }
+export function upsertLocalRecord(record){ const records=loadRecords(); const index=records.findIndex(item=>item.id===record.id); if(index>=0) records[index]=record; else records.unshift(record); saveRecords(records.slice(0,500)); return records; }
 export function loadLatestInventory(){ try { return JSON.parse(localStorage.getItem(LATEST_INVENTORY_KEY)) || {}; } catch { return {}; } }
 export function saveLatestInventory(record){ const latest=loadLatestInventory(); latest[record.bag]=record; localStorage.setItem(LATEST_INVENTORY_KEY,JSON.stringify(latest)); }
+export function loadPendingSync(){ try { return JSON.parse(localStorage.getItem(PENDING_SYNC_KEY)) || []; } catch { return []; } }
+export function savePendingSync(records){ localStorage.setItem(PENDING_SYNC_KEY,JSON.stringify(records)); }
 export function getWeekDays(){ const monday=startOfWeek(); return Array.from({length:7},(_,i)=>{ const d=new Date(monday); d.setDate(monday.getDate()+i); return d; }); }
 export function recordLowItems(record){ if(!record?.quantities) return []; return Object.values(record.quantities).flatMap(category => category.items || []).filter(item => item.qty < item.standard); }
-
-export function seedDemoRecords(){
-  const existing=loadRecords(); if(existing.length) return existing;
-  const days=getWeekDays(); const now=new Date();
-  const demo=[
-    {id:"demo-1",date:isoDate(days[0]),time:"08:12",bag:"PHC 1",shift:"Pagi",ppp:"Rosli",notes:"Semua peralatan lengkap.",quantities:{},prototype:true},
-    {id:"demo-2",date:isoDate(days[0]),time:"15:06",bag:"PHC 2",shift:"Petang",ppp:"Fairuz",notes:"Perlu restock selepas penggunaan.",quantities:{medication:{items:[{name:"Adrenaline 1mg",qty:3,standard:5}]},iv:{items:[{name:"Branula size 18G",qty:2,standard:4}]}},prototype:true},
-    {id:"demo-3",date:isoDate(days[Math.min(1,Math.max(0,(now.getDay()||7)-1))]),time:"07:48",bag:"PHC 1",shift:"Pagi",ppp:"Sofia",notes:"",quantities:{},prototype:true}
-  ]; saveRecords(demo); return demo;
-}
 
 export function registerServiceWorker(){
   if(typeof navigator==="undefined"||!("serviceWorker" in navigator)||location.protocol==="file:") return;
