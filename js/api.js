@@ -1,0 +1,68 @@
+import { APPS_SCRIPT_URL, API_TIMEOUT_MS, APP_VERSION } from "./config.js";
+import { loadPendingSync, savePendingSync, saveLatestInventory, upsertLocalRecord } from "./app.js";
+
+function configured(){ return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(APPS_SCRIPT_URL); }
+
+async function request(url, options={}){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),API_TIMEOUT_MS);
+  try{
+    const response=await fetch(url,{...options,signal:controller.signal,redirect:"follow"});
+    const data=await response.json();
+    if(!response.ok || data.ok===false) throw new Error(data.message||`Ralat pelayan (${response.status})`);
+    return data;
+  } finally { clearTimeout(timer); }
+}
+
+export function apiConfigured(){ return configured(); }
+
+export async function fetchRecords(from,to){
+  if(!configured()) throw new Error("Google Sheet belum disambungkan.");
+  const url=new URL(APPS_SCRIPT_URL); url.searchParams.set("action","records");
+  if(from) url.searchParams.set("from",from); if(to) url.searchParams.set("to",to);
+  const data=await request(url.toString(),{cache:"no-store"});
+  return Array.isArray(data.records)?data.records:[];
+}
+
+async function sendInspection(record){
+  const data=await request(APPS_SCRIPT_URL,{
+    method:"POST",
+    headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body:JSON.stringify({action:"saveInspection",appVersion:APP_VERSION,record}),
+  });
+  return {...record,syncStatus:"SYNCED",serverSavedAt:data.savedAt||record.savedAt};
+}
+
+export async function saveInspection(record){
+  const prepared={...record,appVersion:APP_VERSION,syncStatus:"PENDING"};
+  upsertLocalRecord(prepared); saveLatestInventory(prepared);
+  if(!configured()){
+    queueInspection(prepared);
+    return {record:prepared,synced:false,message:"Google Sheet belum disambungkan. Rekod disimpan sementara pada peranti."};
+  }
+  try{
+    const synced=await sendInspection(prepared);
+    upsertLocalRecord(synced); saveLatestInventory(synced);
+    return {record:synced,synced:true,message:"Data berjaya dihantar ke Google Sheet."};
+  }catch(error){
+    queueInspection(prepared);
+    return {record:prepared,synced:false,message:navigator.onLine?`Data disimpan sementara: ${error.message}`:"Tiada internet. Data disimpan sementara dan akan dihantar semula."};
+  }
+}
+
+export function queueInspection(record){
+  const pending=loadPendingSync();
+  if(!pending.some(item=>item.id===record.id)) pending.push(record);
+  savePendingSync(pending);
+}
+
+export async function syncPendingInspections(){
+  if(!configured() || !navigator.onLine) return {synced:0,pending:loadPendingSync().length};
+  const pending=loadPendingSync(); const remaining=[]; let synced=0;
+  for(const record of pending){
+    try{ const saved=await sendInspection(record); upsertLocalRecord(saved); saveLatestInventory(saved); synced+=1; }
+    catch{ remaining.push(record); }
+  }
+  savePendingSync(remaining);
+  return {synced,pending:remaining.length};
+}

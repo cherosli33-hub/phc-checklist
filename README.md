@@ -1,28 +1,21 @@
-# PHC Inventory Prototype V1
+# PHC Checklist
 
-Prototype aplikasi checklist Beg Pre Hospital Care untuk Hospital Kuala Lipis.
+Sistem pemeriksaan inventori Beg Pre Hospital Care untuk Hospital Kuala Lipis.
 
-## Jalankan projek
+## Fungsi
 
-```bash
-npm install
-npm run dev
-```
+- PHC 1: 78 item dalam 7 kategori.
+- PHC 2: 75 item dalam 6 kategori tanpa Dextrostix.
+- Kuantiti tidak boleh melebihi standard item.
+- Rekod dihantar ke Google Sheet melalui Google Apps Script.
+- Sokongan offline: rekod disimpan sementara dan dihantar semula apabila talian tersedia.
+- Dashboard harian, rekod mingguan dan amaran restock.
+- PWA boleh dipasang dan digunakan secara responsif.
 
-Untuk bina versi GitHub Pages:
+## Sambungan produksi
 
-```bash
-npm run build
-```
+1. Import workbook `PHC_Google_Sheet_Production.xlsx` sebagai Google Sheet native.
+2. Pasang kandungan folder `google-apps-script` sebagai Web app.
+3. Masukkan URL deployment `/exec` dalam `js/config.js`.
 
-Muat naik kandungan folder `dist` ke GitHub Pages.
-
-## Skop prototaip
-
-- HTML, CSS dan Vanilla JavaScript sahaja
-- Dashboard status harian untuk PHC 1 dan PHC 2
-- Aliran checklist PHC 1 (7 kategori) dan PHC 2 (6 kategori)
-- Rekod mingguan dan alert restock
-- Data setempat melalui `localStorage`
-- PWA boleh dipasang dan digunakan secara offline
-- Tiada Google Sheet, Apps Script, login atau backend
+Aplikasi PHC ini kekal berasingan daripada Dashboard AMO sehingga integrasi diarahkan.

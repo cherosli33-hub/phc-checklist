@@ -1,6 +1,6 @@
 {
-  "name": "phc-inventory-prototype",
-  "version": "1.0.0",
+  "name": "phc-checklist",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
