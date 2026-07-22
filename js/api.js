@@ -1,5 +1,5 @@
 import { APPS_SCRIPT_URL, API_TIMEOUT_MS, APP_VERSION } from "./config.js";
-import { loadPendingSync, savePendingSync, saveLatestInventory, upsertLocalRecord } from "./app.js";
+import { loadPendingSync, loadRestockActions, savePendingSync, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
 
 function configured(){ return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(APPS_SCRIPT_URL); }
 
@@ -44,19 +44,17 @@ async function sendInspection(record){
 
 export async function saveInspection(record){
   const prepared={...record,appVersion:APP_VERSION,syncStatus:"PENDING"};
-  upsertLocalRecord(prepared); saveLatestInventory(prepared);
-  if(!configured()){
-    queueInspection(prepared);
-    return {record:prepared,synced:false,message:"Google Sheet belum disambungkan. Rekod disimpan sementara pada peranti."};
-  }
-  try{
-    const synced=await sendInspection(prepared);
-    upsertLocalRecord(synced); saveLatestInventory(synced);
-    return {record:synced,synced:true,message:"Data berjaya dihantar ke Google Sheet."};
-  }catch(error){
-    queueInspection(prepared);
-    return {record:prepared,synced:false,message:navigator.onLine?`Data disimpan sementara: ${error.message}`:"Tiada internet. Data disimpan sementara dan akan dihantar semula."};
-  }
+  upsertLocalRecord(prepared); saveLatestInventory(prepared); queueInspection(prepared);
+  if(configured() && navigator.onLine) syncPendingInspections().catch(()=>{});
+  return {record:prepared,synced:false,message:"Rekod disimpan. Sync Google Sheet berjalan di belakang."};
+}
+
+export async function syncPendingRestockActions(){
+  const actions=loadRestockActions(); const pending=Object.entries(actions).filter(([,value])=>value.syncStatus!=="SYNCED"&&value.findingId);
+  if(!configured()||!navigator.onLine) return {synced:0,pending:pending.length};
+  let synced=0;
+  for(const [key,value] of pending){ try{ await saveRestockResolution(value.findingId,value.action); saveRestockAction(key,value.action,{findingId:value.findingId,syncStatus:"SYNCED"}); synced++; }catch{} }
+  return {synced,pending:pending.length-synced};
 }
 
 export function queueInspection(record){

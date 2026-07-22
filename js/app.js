@@ -43,7 +43,7 @@ export function saveLatestInventory(record){
   localStorage.setItem(LATEST_INVENTORY_KEY,JSON.stringify(latest));
 }
 export function loadRestockActions(){ try { return JSON.parse(localStorage.getItem(RESTOCK_ACTIONS_KEY)) || {}; } catch { return {}; } }
-export function saveRestockAction(key, action){ const actions=loadRestockActions(); actions[key]={action:String(action||"").trim(),completedAt:new Date().toISOString()}; localStorage.setItem(RESTOCK_ACTIONS_KEY,JSON.stringify(actions)); return actions[key]; }
+export function saveRestockAction(key, action, details={}){ const actions=loadRestockActions(); actions[key]={...actions[key],...details,action:String(action||"").trim(),completedAt:actions[key]?.completedAt||new Date().toISOString()}; localStorage.setItem(RESTOCK_ACTIONS_KEY,JSON.stringify(actions)); return actions[key]; }
 export function loadPendingSync(){ try { return JSON.parse(localStorage.getItem(PENDING_SYNC_KEY)) || []; } catch { return []; } }
 export function savePendingSync(records){ localStorage.setItem(PENDING_SYNC_KEY,JSON.stringify(records)); }
 export function getWeekDays(){ const monday=startOfWeek(); return Array.from({length:7},(_,i)=>{ const d=new Date(monday); d.setDate(monday.getDate()+i); return d; }); }
