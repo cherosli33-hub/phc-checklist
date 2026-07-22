@@ -1,4 +1,5 @@
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
+const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
   checks: 'ITEM CHECK',
@@ -39,9 +40,12 @@ function resolveFinding_(findingId, resolution) {
   if (sheet.getLastRow() < 2) throw new Error('Penemuan tidak ditemui.');
   const match = sheet.getRange(2,1,sheet.getLastRow()-1,1).createTextFinder(id).matchEntireCell(true).findNext();
   if (!match) throw new Error('Penemuan tidak ditemui.');
-  sheet.getRange(match.getRow(),11,1,2).setValues([[action,'SELESAI']]);
+  sheet.getRange(match.getRow(),11,1,4).setValues([[
+    action, new Date(), sheet.getRange(match.getRow(),13).getValue(), 'Telah diambil tindakan'
+  ]]);
+  sheet.getRange(match.getRow(),12).setNumberFormat('yyyy-mm-dd HH:mm');
   SpreadsheetApp.flush();
-  return {ok:true, findingId:id, status:'SELESAI', savedAt:new Date().toISOString()};
+  return {ok:true, findingId:id, status:'Telah diambil tindakan', savedAt:new Date().toISOString()};
 }
 
 function saveInspection_(record, clientVersion) {
@@ -58,19 +62,27 @@ function saveInspection_(record, clientVersion) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    if (idExists_(inspectionSheet, checked.id)) {
-      return {ok:true, duplicate:true, id:checked.id, savedAt:new Date().toISOString()};
-    }
     const date = parseIsoDate_(checked.date);
     const timestamp = new Date(checked.savedAt);
-    const monthNumber = date.getMonth() + 1;
+    const dateParts = checked.date.split('-').map(Number);
+    const monthNumber = dateParts[1];
     const monthName = MONTHS[monthNumber - 1];
     const shortageCount = items.filter(item => item.qty < item.standard).length;
-    inspectionSheet.appendRow([
+    const inspectionRow = [
       checked.id, checked.checkKey, timestamp, date, monthName, monthNumber, date.getFullYear(),
       checked.bag, checked.shift, checked.ppp, items.length, shortageCount, checked.notes,
       'SYNCED', safeText_(clientVersion || APP_VERSION, 30),
-    ]);
+    ];
+
+    const existing = findRowByValue_(inspectionSheet, 2, checked.checkKey);
+    if (existing) {
+      const oldId = String(inspectionSheet.getRange(existing, 1).getValue());
+      deleteRowsByValue_(checkSheet, 1, oldId);
+      deleteRowsByValue_(findingSheet, 2, oldId);
+      inspectionSheet.getRange(existing, 1, 1, inspectionRow.length).setValues([inspectionRow]);
+    } else {
+      inspectionSheet.appendRow(inspectionRow);
+    }
 
     const checkRows = items.map(item => [
       checked.id, checked.checkKey, timestamp, date, monthName, monthNumber, date.getFullYear(),
@@ -83,9 +95,17 @@ function saveInspection_(record, clientVersion) {
     const findingRows = items.filter(item => item.qty < item.standard).map((item, index) => [
       `${checked.id}-F${String(index + 1).padStart(3, '0')}`, checked.id, date, monthName,
       monthNumber, date.getFullYear(), `${checked.bag} / ${checked.shift}`, item.name,
-      item.qty, item.standard, '', '', checked.notes,
+      item.qty, item.standard, '', '', '', 'Belum diambil tindakan',
     ]);
+    if (checked.notes) {
+      findingRows.push([
+        `${checked.id}-NOTE`, checked.id, date, monthName, monthNumber, date.getFullYear(),
+        `${checked.bag} / ${checked.shift}`, 'Catatan pengguna', '', '', '', '', checked.notes,
+        'Belum diambil tindakan',
+      ]);
+    }
     appendRows_(findingSheet, findingRows);
+    applyProductionFormatting_(spreadsheet);
     SpreadsheetApp.flush();
     return {ok:true, id:checked.id, savedAt:new Date().toISOString(), itemCount:items.length, findingCount:findingRows.length};
   } finally {
@@ -97,12 +117,20 @@ function getRecords_(fromText, toText) {
   const spreadsheet = getSpreadsheet_();
   const inspectionSheet = requiredSheet_(spreadsheet, SHEETS.inspections);
   const checkSheet = requiredSheet_(spreadsheet, SHEETS.checks);
-  const from = fromText ? parseIsoDate_(fromText) : new Date(2000,0,1);
-  const to = toText ? parseIsoDate_(toText) : new Date(2100,11,31);
+  const fromKey = fromText ? safeText_(fromText, 10) : '2000-01-01';
+  const toKey = toText ? safeText_(toText, 10) : '2100-12-31';
+  parseIsoDate_(fromKey); parseIsoDate_(toKey);
   const rows = dataRows_(inspectionSheet, 15).filter(row => row[0]);
-  const selected = rows.filter(row => {
-    const date = normaliseDate_(row[3]); return date >= from && date <= to;
+  const selectedAll = rows.filter(row => {
+    const dateKey = formatIsoDate_(row[3]); return dateKey >= fromKey && dateKey <= toKey;
   });
+  const selectedMap = {};
+  selectedAll.forEach(row => {
+    const key = String(row[1]);
+    const current = selectedMap[key];
+    if (!current || normaliseDate_(row[2]).getTime() > normaliseDate_(current[2]).getTime()) selectedMap[key] = row;
+  });
+  const selected = Object.values(selectedMap);
   const ids = new Set(selected.map(row => String(row[0])));
   const itemRows = dataRows_(checkSheet, 18).filter(row => ids.has(String(row[0])));
   const quantitiesById = {};
@@ -114,7 +142,7 @@ function getRecords_(fromText, toText) {
   });
   return selected.map(row => ({
     id:String(row[0]), checkKey:String(row[1]), savedAt:normaliseDateTime_(row[2]), date:formatIsoDate_(row[3]),
-    time:Utilities.formatDate(normaliseDate_(row[2]), Session.getScriptTimeZone() || 'Asia/Kuala_Lumpur', 'HH:mm'),
+    time:Utilities.formatDate(normaliseDate_(row[2]), TIME_ZONE, 'HH:mm'),
     bag:String(row[7]), shift:String(row[8]), ppp:String(row[9]), notes:String(row[12] || ''),
     syncStatus:'SYNCED', appVersion:String(row[14] || ''), quantities:quantitiesById[String(row[0])] || {},
   }));
@@ -173,6 +201,109 @@ function setupSpreadsheetId(spreadsheetId) {
   return `Google Sheet disambungkan: ${file.getName()}`;
 }
 
+/** Jalankan sekali selepas memasang versi 2.4.0. */
+function migrateProductionData() {
+  const spreadsheet = getSpreadsheet_();
+  spreadsheet.setSpreadsheetTimeZone(TIME_ZONE);
+  const inspectionSheet = requiredSheet_(spreadsheet, SHEETS.inspections);
+  const checkSheet = requiredSheet_(spreadsheet, SHEETS.checks);
+  const findingSheet = requiredSheet_(spreadsheet, SHEETS.findings);
+  const inspections = dataRows_(inspectionSheet, 15).filter(row => row[0] && row[1]);
+
+  const latestByKey = {};
+  inspections.forEach(row => {
+    const key = String(row[1]);
+    if (!latestByKey[key] || normaliseDate_(row[2]).getTime() > normaliseDate_(latestByKey[key][2]).getTime()) latestByKey[key] = row;
+  });
+  const keptInspections = Object.values(latestByKey).map(row => {
+    const copy = row.slice();
+    const dateKey = String(copy[1]).slice(0, 10);
+    const parts = dateKey.split('-').map(Number);
+    copy[3] = parseIsoDate_(dateKey);
+    copy[4] = MONTHS[parts[1] - 1]; copy[5] = parts[1]; copy[6] = parts[0];
+    return copy;
+  }).sort((a,b) => normaliseDate_(a[2]) - normaliseDate_(b[2]));
+  const keptIds = new Set(keptInspections.map(row => String(row[0])));
+  const inspectionById = {};
+  keptInspections.forEach(row => { inspectionById[String(row[0])] = row; });
+  const keptChecks = dataRows_(checkSheet, 18).filter(row => keptIds.has(String(row[0]))).map(row => {
+    const copy = row.slice(); const inspection = inspectionById[String(copy[0])];
+    copy[3] = inspection[3]; copy[4] = inspection[4]; copy[5] = inspection[5]; copy[6] = inspection[6];
+    return copy;
+  });
+
+  const oldFindings = dataRows_(findingSheet, Math.max(14, findingSheet.getLastColumn()));
+  const oldActionById = {};
+  oldFindings.forEach(row => {
+    if (row[0] && (row[10] || row[13])) oldActionById[String(row[0])] = {action:row[10], date:row[11], status:row[13]};
+  });
+  const checksByInspection = {};
+  keptChecks.forEach(row => {
+    const id = String(row[0]);
+    if (!checksByInspection[id]) checksByInspection[id] = [];
+    checksByInspection[id].push(row);
+  });
+  const rebuiltFindings = [];
+  keptInspections.forEach(inspection => {
+    const id = String(inspection[0]);
+    let index = 0;
+    (checksByInspection[id] || []).filter(row => Number(row[14]) < Number(row[13])).forEach(row => {
+      const findingId = `${id}-F${String(++index).padStart(3, '0')}`;
+      const prior = oldActionById[findingId] || {};
+      rebuiltFindings.push([
+        findingId, id, inspection[3], inspection[4], inspection[5], inspection[6],
+        `${inspection[7]} / ${inspection[8]}`, row[12], row[14], row[13],
+        prior.action || '', prior.date || '', '', prior.status || 'Belum diambil tindakan',
+      ]);
+    });
+    if (String(inspection[12] || '').trim()) {
+      const findingId = `${id}-NOTE`;
+      const prior = oldActionById[findingId] || {};
+      rebuiltFindings.push([
+        findingId, id, inspection[3], inspection[4], inspection[5], inspection[6],
+        `${inspection[7]} / ${inspection[8]}`, 'Catatan pengguna', '', '',
+        prior.action || '', prior.date || '', String(inspection[12]).trim(), prior.status || 'Belum diambil tindakan',
+      ]);
+    }
+  });
+
+  rewriteData_(inspectionSheet, 15, keptInspections);
+  rewriteData_(checkSheet, 18, keptChecks);
+  rewriteData_(findingSheet, 14, rebuiltFindings);
+  applyProductionFormatting_(spreadsheet);
+  updateMonthlyReport_(spreadsheet);
+  SpreadsheetApp.flush();
+  return `Migrasi selesai: ${keptInspections.length} pemeriksaan unik, ${rebuiltFindings.length} penemuan.`;
+}
+
+function applyProductionFormatting_(spreadsheet) {
+  spreadsheet.setSpreadsheetTimeZone(TIME_ZONE);
+  const inspectionSheet = requiredSheet_(spreadsheet, SHEETS.inspections);
+  const checkSheet = requiredSheet_(spreadsheet, SHEETS.checks);
+  const findingSheet = requiredSheet_(spreadsheet, SHEETS.findings);
+  findingSheet.getRange(1,14).setValue('Status');
+  inspectionSheet.getRange('C:C').setNumberFormat('yyyy-mm-dd HH:mm:ss');
+  inspectionSheet.getRange('D:D').setNumberFormat('yyyy-mm-dd');
+  checkSheet.getRange('C:C').setNumberFormat('yyyy-mm-dd HH:mm:ss');
+  checkSheet.getRange('D:D').setNumberFormat('yyyy-mm-dd');
+  findingSheet.getRange('C:C').setNumberFormat('yyyy-mm-dd');
+  findingSheet.getRange('L:L').setNumberFormat('yyyy-mm-dd HH:mm');
+}
+
+function updateMonthlyReport_(spreadsheet) {
+  const sheet = spreadsheet.getSheetByName('LAPORAN BULANAN');
+  if (!sheet) return;
+  sheet.getRange('C10').setFormula('=IFERROR(COUNTUNIQUE(FILTER(PEMERIKSAAN!$B$2:$B$4999,PEMERIKSAAN!$E$2:$E$4999=$B$3,PEMERIKSAAN!$G$2:$G$4999=$D$3,PEMERIKSAAN!$H$2:$H$4999=$A10)),0)');
+  sheet.getRange('C11').setFormula('=IFERROR(COUNTUNIQUE(FILTER(PEMERIKSAAN!$B$2:$B$4999,PEMERIKSAAN!$E$2:$E$4999=$B$3,PEMERIKSAAN!$G$2:$G$4999=$D$3,PEMERIKSAAN!$H$2:$H$4999=$A11)),0)');
+  sheet.getRange('F15').setValue('Status');
+  sheet.getRange('A16').setFormula('=IFERROR(FILTER({PENEMUAN!C2:C9999,PENEMUAN!G2:G9999,IF(PENEMUAN!H2:H9999="Catatan pengguna",PENEMUAN!M2:M9999,PENEMUAN!H2:H9999&" ("&PENEMUAN!I2:I9999&"/"&PENEMUAN!J2:J9999&")"),PENEMUAN!K2:K9999,PENEMUAN!L2:L9999,PENEMUAN!N2:N9999},PENEMUAN!D2:D9999=$B$3,PENEMUAN!F2:F9999=$D$3),"Tiada penemuan")');
+  sheet.getRange('H10').setFormula('=COUNTIFS(PENEMUAN!$D$2:$D$9999,$B$3,PENEMUAN!$F$2:$F$9999,$D$3)');
+  sheet.getRange('H11').setFormula('=COUNTIFS(PENEMUAN!$D$2:$D$9999,$B$3,PENEMUAN!$F$2:$F$9999,$D$3,PENEMUAN!$N$2:$N$9999,"<>Telah diambil tindakan")');
+  sheet.getRange('F15').setBackground('#071d36').setFontColor('#ffffff').setFontWeight('bold');
+  sheet.getRange('F16:F200').setWrap(true).setVerticalAlignment('middle');
+  sheet.setColumnWidth(6, 150);
+}
+
 function getSpreadsheet_() {
   const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   if (id) return SpreadsheetApp.openById(id);
@@ -184,9 +315,12 @@ function requiredSheet_(spreadsheet, name) { const sheet=spreadsheet.getSheetByN
 function dataRows_(sheet, columns) { const last=sheet.getLastRow(); return last < 2 ? [] : sheet.getRange(2,1,last-1,columns).getValues(); }
 function appendRows_(sheet, rows) { if(rows.length) sheet.getRange(sheet.getLastRow()+1,1,rows.length,rows[0].length).setValues(rows); }
 function idExists_(sheet, id) { if(sheet.getLastRow()<2) return false; return !!sheet.getRange(2,1,sheet.getLastRow()-1,1).createTextFinder(id).matchEntireCell(true).findNext(); }
+function findRowByValue_(sheet, column, value) { if(sheet.getLastRow()<2) return 0; const match=sheet.getRange(2,column,sheet.getLastRow()-1,1).createTextFinder(String(value)).matchEntireCell(true).findNext(); return match ? match.getRow() : 0; }
+function deleteRowsByValue_(sheet, column, value) { for(let row=sheet.getLastRow();row>=2;row--){ if(String(sheet.getRange(row,column).getValue())===String(value)) sheet.deleteRow(row); } }
+function rewriteData_(sheet, columns, rows) { const existing=Math.max(0,sheet.getLastRow()-1); if(existing) sheet.getRange(2,1,existing,Math.max(columns,sheet.getLastColumn())).clearContent(); if(rows.length) sheet.getRange(2,1,rows.length,columns).setValues(rows.map(row=>row.slice(0,columns))); }
 function safeText_(value, max) { return String(value == null ? '' : value).replace(/[\u0000-\u001F\u007F]/g,' ').trim().slice(0,max); }
-function parseIsoDate_(text) { if(!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error('Tarikh tidak sah.'); const parts=text.split('-').map(Number); const date=new Date(parts[0],parts[1]-1,parts[2]); if(date.getFullYear()!==parts[0]||date.getMonth()!==parts[1]-1||date.getDate()!==parts[2]) throw new Error('Tarikh tidak sah.'); return date; }
+function parseIsoDate_(text) { if(!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error('Tarikh tidak sah.'); const parts=text.split('-').map(Number); const date=new Date(`${text}T12:00:00+08:00`); if(Number.isNaN(date.getTime())||Number(Utilities.formatDate(date,TIME_ZONE,'yyyy'))!==parts[0]||Number(Utilities.formatDate(date,TIME_ZONE,'MM'))!==parts[1]||Number(Utilities.formatDate(date,TIME_ZONE,'dd'))!==parts[2]) throw new Error('Tarikh tidak sah.'); return date; }
 function normaliseDate_(value) { return value instanceof Date ? value : new Date(value); }
 function normaliseDateTime_(value) { return normaliseDate_(value).toISOString(); }
-function formatIsoDate_(value) { return Utilities.formatDate(normaliseDate_(value), Session.getScriptTimeZone() || 'Asia/Kuala_Lumpur', 'yyyy-MM-dd'); }
+function formatIsoDate_(value) { return Utilities.formatDate(normaliseDate_(value), TIME_ZONE, 'yyyy-MM-dd'); }
 function json_(payload) { return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON); }
