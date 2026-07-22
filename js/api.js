@@ -1,5 +1,5 @@
 import { APPS_SCRIPT_URL, API_TIMEOUT_MS, APP_VERSION } from "./config.js";
-import { loadPendingSync, loadRestockActions, savePendingSync, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
+import { loadFindings, loadPendingSync, loadRestockActions, saveFindings, savePendingSync, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
 
 function configured(){ return /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(APPS_SCRIPT_URL); }
 
@@ -53,6 +53,11 @@ async function sendInspection(record){
 export async function saveInspection(record){
   const prepared={...record,appVersion:APP_VERSION,syncStatus:"PENDING"};
   upsertLocalRecord(prepared); saveLatestInventory(prepared); queueInspection(prepared);
+  if(prepared.notes){
+    const cached=loadFindings().filter(finding=>finding.id!==`${prepared.id}-NOTE`);
+    cached.unshift({id:`${prepared.id}-NOTE`,inspectionId:prepared.id,date:prepared.date,bagShift:`${prepared.bag} / ${prepared.shift}`,note:prepared.notes,action:"",actionAt:"",status:"Belum diambil tindakan"});
+    saveFindings(cached);
+  }
   if(configured() && navigator.onLine) syncPendingInspections().catch(()=>{});
   return {record:prepared,synced:false,message:"Rekod disimpan. Sync Google Sheet berjalan di belakang."};
 }
