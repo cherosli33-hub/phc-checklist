@@ -1,5 +1,5 @@
-import { SHIFTS, formatDate, getWeekDays, isoDate, loadLatestInventory, loadPendingSync, loadRecords, recordLowItems, saveLatestInventory, upsertLocalRecord } from "./app.js";
-import { apiConfigured, fetchRecords, syncPendingInspections } from "./api.js";
+import { SHIFTS, formatDate, getWeekDays, isoDate, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, recordLowItems, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
+import { apiConfigured, fetchRecords, saveRestockResolution, syncPendingInspections } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
@@ -12,14 +12,17 @@ function latestUniqueRecords(items){ const seen=new Set(); return [...items].sor
 function statusIcon(done){ return `<span class="state-dot ${done?"done":"missing"}">${done?"✓":"×"}</span>`; }
 function weekStatus(date){ const dateKey=isoDate(date); if(date>now) return "pending"; return records.some(record=>record.date===dateKey)?"done":"missing"; }
 function esc(value=""){ return String(value).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])); }
+function shortageKey(record,item){ return `${record.id}|${item.name}`; }
+function newestRecord(items){ return items.filter(Boolean).sort((a,b)=>recordTimestamp(b)-recordTimestamp(a))[0]; }
 
 function render(){
   const unique=latestUniqueRecords(records); const todayRecords=unique.filter(record=>record.date===today);
   const completed=new Set(todayRecords.map(record=>`${record.bag}-${record.shift}`));
   const expected=[...SHIFTS.map(shift=>`PHC 1-${shift}`),...SHIFTS.map(shift=>`PHC 2-${shift}`)];
   const next=expected.find(key=>!completed.has(key)); const savedLatest=loadLatestInventory();
-  const latestInventory=["PHC 1","PHC 2"].map(bag=>savedLatest[bag]||unique.filter(record=>record.bag===bag&&record.quantities).sort((a,b)=>recordTimestamp(b)-recordTimestamp(a))[0]).filter(Boolean);
-  const lowItems=latestInventory.flatMap(record=>recordLowItems(record).map(item=>({...item,bag:record.bag,shift:record.shift,date:record.date})));
+  const latestInventory=["PHC 1","PHC 2"].map(bag=>newestRecord([savedLatest[bag],...unique.filter(record=>record.bag===bag&&record.quantities)])).filter(Boolean);
+  const actions=loadRestockActions();
+  const lowItems=latestInventory.flatMap(record=>recordLowItems(record).map((item,index)=>({...item,bag:record.bag,shift:record.shift,date:record.date,recordId:record.id,findingId:`${record.id}-F${String(index+1).padStart(3,"0")}`,key:shortageKey(record,item)}))).filter(item=>!actions[item.key]);
   const pending=loadPendingSync().length;
   const bagCard=bag=>`<article class="card bag-card"><div class="bag-title"><span class="bag-badge">▣</span><h3>Beg ${bag}</h3></div><div class="shift-list">${SHIFTS.map(shift=>`<div class="shift-row"><span>${shift}</span>${statusIcon(completed.has(`${bag}-${shift}`))}</div>`).join("")}</div></article>`;
   content.innerHTML=`
@@ -37,7 +40,7 @@ function render(){
 function showRestock(lowItems){
   if(!lowItems.length){ alert("Tiada item perlu restock."); return; }
   restockModal.hidden=false;
-  restockModal.innerHTML=`<section class="modal" role="dialog" aria-modal="true" aria-label="Item perlu restock"><div class="modal-handle"></div><div class="modal-head"><div><p class="eyebrow">AMARAN STOK</p><h2>Item Perlu Restock</h2></div><button class="modal-close" aria-label="Tutup">×</button></div><div class="restock-table"><div class="restock-table-head"><span>Item</span><span>Beg & shift</span><span>Qty</span></div>${lowItems.map(item=>`<div class="restock-table-row"><span><strong>${esc(item.name)}</strong><small>Standard ${item.standard}</small></span><span><b>${item.bag}</b><small>${item.shift}</small></span><span class="restock-qty">${item.qty}/${item.standard}</span></div>`).join("")}</div></section>`;
+  restockModal.innerHTML=`<section class="modal restock-modal" role="dialog" aria-modal="true" aria-label="Item perlu restock"><div class="modal-handle"></div><div class="modal-head"><div><p class="eyebrow">AMARAN STOK</p><h2>Item Perlu Restock</h2></div><button class="modal-close" aria-label="Tutup">×</button></div><p class="restock-help">Catat tindakan selepas stok diambil, kemudian tekan <strong>Selesai</strong>.</p><div class="restock-table">${lowItems.map(item=>`<div class="restock-table-row" data-restock-key="${esc(item.key)}" data-finding-id="${esc(item.findingId)}"><div class="restock-summary"><span><strong>${esc(item.name)}</strong><small>Standard ${item.standard} · ${item.bag} · ${item.shift}</small></span><span class="restock-qty">${item.qty}/${item.standard}</span></div><div class="restock-action"><label>Tindakan diambil</label><div><input class="restock-action-input" placeholder="Contoh: Stok telah ditambah" maxlength="200"><button class="restock-done" data-complete-restock="${esc(item.key)}">Selesai</button></div></div></div>`).join("")}</div></section>`;
 }
 function updateClock(){ const el=document.querySelector("#liveTime"); if(el) el.textContent=new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:true}).format(new Date()); }
 
@@ -52,6 +55,16 @@ async function refresh(){
   render();
 }
 
-restockModal.addEventListener("click",event=>{ if(event.target===restockModal||event.target.closest(".modal-close")) restockModal.hidden=true; });
+restockModal.addEventListener("click",async event=>{
+  if(event.target===restockModal||event.target.closest(".modal-close")){ restockModal.hidden=true; return; }
+  const button=event.target.closest("[data-complete-restock]"); if(!button) return;
+  const row=button.closest("[data-restock-key]"); const input=row.querySelector(".restock-action-input"); const action=input.value.trim();
+  if(!action){ input.focus(); input.classList.add("invalid"); return; }
+  button.disabled=true; button.textContent="Simpan...";
+  saveRestockAction(button.dataset.completeRestock,action);
+  try{ await saveRestockResolution(row.dataset.findingId,action); }catch(error){ connectionMessage=`Tindakan disimpan pada peranti: ${error.message}`; }
+  row.remove(); render();
+  if(!restockModal.querySelector("[data-restock-key]")) restockModal.hidden=true;
+});
 window.addEventListener("online",refresh); window.addEventListener("pageshow",event=>{ if(event.persisted) refresh(); });
 render(); setInterval(updateClock,30000); refresh();

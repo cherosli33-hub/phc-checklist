@@ -1,4 +1,4 @@
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
   checks: 'ITEM CHECK',
@@ -23,11 +23,25 @@ function doGet(e) {
 function doPost(e) {
   try {
     const payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (payload.action !== 'saveInspection') return json_({ok:false, message:'Tindakan tidak dikenali.'});
-    return json_(saveInspection_(payload.record, payload.appVersion));
+    if (payload.action === 'saveInspection') return json_(saveInspection_(payload.record, payload.appVersion));
+    if (payload.action === 'resolveFinding') return json_(resolveFinding_(payload.findingId, payload.resolution));
+    return json_({ok:false, message:'Tindakan tidak dikenali.'});
   } catch (error) {
     return json_({ok:false, message:error.message || String(error)});
   }
+}
+
+function resolveFinding_(findingId, resolution) {
+  const id = safeText_(findingId, 100);
+  const action = safeText_(resolution, 200);
+  if (!id || !action) throw new Error('ID penemuan dan tindakan diperlukan.');
+  const sheet = requiredSheet_(getSpreadsheet_(), SHEETS.findings);
+  if (sheet.getLastRow() < 2) throw new Error('Penemuan tidak ditemui.');
+  const match = sheet.getRange(2,1,sheet.getLastRow()-1,1).createTextFinder(id).matchEntireCell(true).findNext();
+  if (!match) throw new Error('Penemuan tidak ditemui.');
+  sheet.getRange(match.getRow(),11,1,2).setValues([[action,'SELESAI']]);
+  SpreadsheetApp.flush();
+  return {ok:true, findingId:id, status:'SELESAI', savedAt:new Date().toISOString()};
 }
 
 function saveInspection_(record, clientVersion) {
