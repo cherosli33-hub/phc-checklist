@@ -1,4 +1,4 @@
-import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, recordLowItems, saveFindings, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
+import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, recordLowItems, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
 import { apiConfigured, fetchFindings, fetchRecords, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
@@ -75,8 +75,8 @@ async function runRefresh(){
     findings=mergeFindings(remoteFindings); saveFindings(findings); connectionMessage=""; render();
   });
   const recordsRequest=fetchRecords(from,to).then(remote=>{
-    remote.forEach(record=>{ upsertLocalRecord(record); if(record.quantities) saveLatestInventory(record); });
-    records=loadRecords(); findings=mergeFindings(findings,remote); saveFindings(findings); connectionMessage=""; render();
+    remote.forEach(record=>{ if(record.quantities) saveLatestInventory(record); });
+    records=reconcileRemoteRecords(remote,from,to); findings=mergeFindings(findings,records.filter(record=>record.date>=from&&record.date<=to)); saveFindings(findings); connectionMessage=""; render();
   });
   const result=await Promise.allSettled([findingsRequest,recordsRequest]);
   if(result.every(item=>item.status==="rejected")){ connectionMessage="Paparan menggunakan rekod peranti. Sambungan akan dicuba semula."; render(); }
