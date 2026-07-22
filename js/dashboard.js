@@ -105,5 +105,11 @@ restockModal.addEventListener("click",async event=>{
     : "Restock telah direkodkan dalam Google Sheet sebagai Telah diambil tindakan.";
   render();
 });
-window.addEventListener("online",refresh); window.addEventListener("pageshow",event=>{ if(event.persisted) refresh(); });
-render(); setInterval(updateClock,30000); refresh();
+window.addEventListener("online",refresh);
+window.addEventListener("focus",refresh);
+window.addEventListener("pageshow",refresh);
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") refresh(); });
+render();
+setInterval(updateClock,30000);
+setInterval(()=>{ if(document.visibilityState==="visible") refresh(); },30000);
+refresh();
