@@ -1,4 +1,4 @@
-const APP_VERSION = '2.4.1';
+const APP_VERSION = '2.5.0';
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
@@ -15,6 +15,7 @@ function doGet(e) {
     const action = String((e && e.parameter && e.parameter.action) || 'health');
     if (action === 'health') return json_({ok:true, app:'PHC Checklist', version:APP_VERSION, time:new Date().toISOString()});
     if (action === 'records') return json_({ok:true, records:getRecords_(e.parameter.from, e.parameter.to)});
+    if (action === 'findings') return json_({ok:true, findings:getFindings_(e.parameter.from, e.parameter.to)});
     return json_({ok:false, message:'Tindakan tidak dikenali.'});
   } catch (error) {
     return json_({ok:false, message:error.message || String(error)});
@@ -25,27 +26,32 @@ function doPost(e) {
   try {
     const payload = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     if (payload.action === 'saveInspection') return json_(saveInspection_(payload.record, payload.appVersion));
-    if (payload.action === 'resolveFinding') return json_(resolveFinding_(payload.findingId, payload.resolution));
+    if (payload.action === 'resolveFinding') return json_(resolveFinding_(payload.findingId, payload.resolution, payload.status));
     return json_({ok:false, message:'Tindakan tidak dikenali.'});
   } catch (error) {
     return json_({ok:false, message:error.message || String(error)});
   }
 }
 
-function resolveFinding_(findingId, resolution) {
+function resolveFinding_(findingId, resolution, resolutionStatus) {
   const id = safeText_(findingId, 100);
-  const action = safeText_(resolution, 200);
+  const status = safeText_(resolutionStatus || 'Telah diambil tindakan', 40);
+  const allowedStatuses = ['Telah diambil tindakan','Telah diambil maklum'];
+  if (!allowedStatuses.includes(status)) throw new Error('Status tindakan tidak sah.');
+  const action = safeText_(resolution || status, 200);
   if (!id || !action) throw new Error('ID penemuan dan tindakan diperlukan.');
-  const sheet = requiredSheet_(getSpreadsheet_(), SHEETS.findings);
+  const spreadsheet = getSpreadsheet_();
+  const sheet = requiredSheet_(spreadsheet, SHEETS.findings);
   if (sheet.getLastRow() < 2) throw new Error('Penemuan tidak ditemui.');
   const match = sheet.getRange(2,1,sheet.getLastRow()-1,1).createTextFinder(id).matchEntireCell(true).findNext();
   if (!match) throw new Error('Penemuan tidak ditemui.');
   sheet.getRange(match.getRow(),11,1,4).setValues([[
-    action, new Date(), sheet.getRange(match.getRow(),13).getValue(), 'Telah diambil tindakan'
+    action, new Date(), sheet.getRange(match.getRow(),13).getValue(), status
   ]]);
   sheet.getRange(match.getRow(),12).setNumberFormat('yyyy-mm-dd HH:mm');
+  updateMonthlyReport_(spreadsheet);
   SpreadsheetApp.flush();
-  return {ok:true, findingId:id, status:'Telah diambil tindakan', savedAt:new Date().toISOString()};
+  return {ok:true, findingId:id, status:status, savedAt:new Date().toISOString()};
 }
 
 function saveInspection_(record, clientVersion) {
@@ -145,6 +151,22 @@ function getRecords_(fromText, toText) {
     time:Utilities.formatDate(normaliseDate_(row[2]), TIME_ZONE, 'HH:mm'),
     bag:String(row[7]), shift:String(row[8]), ppp:String(row[9]), notes:String(row[12] || ''),
     syncStatus:'SYNCED', appVersion:String(row[14] || ''), quantities:quantitiesById[String(row[0])] || {},
+  }));
+}
+
+function getFindings_(fromText, toText) {
+  const spreadsheet = getSpreadsheet_();
+  const sheet = requiredSheet_(spreadsheet, SHEETS.findings);
+  const fromKey = fromText ? safeText_(fromText, 10) : '2000-01-01';
+  const toKey = toText ? safeText_(toText, 10) : '2100-12-31';
+  parseIsoDate_(fromKey); parseIsoDate_(toKey);
+  return dataRows_(sheet, 14).filter(row => {
+    const dateKey = formatIsoDate_(row[2]);
+    return row[0] && String(row[7]) === 'Catatan pengguna' && dateKey >= fromKey && dateKey <= toKey;
+  }).map(row => ({
+    id:String(row[0]), inspectionId:String(row[1]), date:formatIsoDate_(row[2]),
+    bagShift:String(row[6]), note:String(row[12] || ''), action:String(row[10] || ''),
+    actionAt:row[11] ? normaliseDateTime_(row[11]) : '', status:String(row[13] || 'Belum diambil tindakan'),
   }));
 }
 
@@ -298,7 +320,7 @@ function updateMonthlyReport_(spreadsheet) {
   sheet.getRange('F15').setValue('Status');
   sheet.getRange('A16').setFormula('=IFERROR(FILTER({PENEMUAN!C2:C9999,PENEMUAN!G2:G9999,IF(PENEMUAN!H2:H9999="Catatan pengguna",PENEMUAN!M2:M9999,PENEMUAN!H2:H9999&" ("&PENEMUAN!I2:I9999&"/"&PENEMUAN!J2:J9999&")"),PENEMUAN!K2:K9999,PENEMUAN!L2:L9999,PENEMUAN!N2:N9999},PENEMUAN!D2:D9999=$B$3,PENEMUAN!F2:F9999=$D$3),"Tiada penemuan")');
   sheet.getRange('H10').setFormula('=COUNTIFS(PENEMUAN!$D$2:$D$9999,$B$3,PENEMUAN!$F$2:$F$9999,$D$3)');
-  sheet.getRange('H11').setFormula('=COUNTIFS(PENEMUAN!$D$2:$D$9999,$B$3,PENEMUAN!$F$2:$F$9999,$D$3,PENEMUAN!$N$2:$N$9999,"<>Telah diambil tindakan")');
+  sheet.getRange('H11').setFormula('=COUNTIFS(PENEMUAN!$D$2:$D$9999,$B$3,PENEMUAN!$F$2:$F$9999,$D$3,PENEMUAN!$N$2:$N$9999,"Belum diambil tindakan")');
   sheet.getRange('F15').setBackground('#071d36').setFontColor('#ffffff').setFontWeight('bold');
   sheet.getRange('F16:F200').setWrap(true).setVerticalAlignment('middle');
   sheet.setColumnWidth(6, 150);

@@ -1,11 +1,11 @@
 import { SHIFTS, formatDate, getWeekDays, isoDate, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, recordLowItems, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
-import { apiConfigured, fetchRecords, syncPendingInspections, syncPendingRestockActions } from "./api.js";
+import { apiConfigured, fetchFindings, fetchRecords, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
 const weekDays=getWeekDays(); const now=new Date(); const today=isoDate(now);
 const shortDay=["Isn","Sel","Rab","Kha","Jum","Sab","Ahd"];
-let records=loadRecords(); let connectionMessage="";
+let records=loadRecords(); let findings=[]; let connectionMessage="";
 
 function recordTimestamp(record){ return new Date(record.savedAt||`${record.date}T${record.time||"00:00"}`).getTime()||0; }
 function latestUniqueRecords(items){ const seen=new Set(); return [...items].sort((a,b)=>recordTimestamp(b)-recordTimestamp(a)).filter(record=>{ const key=record.checkKey||`${record.date}|${record.bag}|${record.shift}`; if(seen.has(key)) return false; seen.add(key); return true; }); }
@@ -13,6 +13,7 @@ function statusIcon(done){ return `<span class="state-dot ${done?"done":"missing
 function weekStatus(date){ const dateKey=isoDate(date); if(date>now) return "pending"; return records.some(record=>record.date===dateKey)?"done":"missing"; }
 function esc(value=""){ return String(value).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])); }
 function shortageKey(record,item){ return `${record.id}|${item.name}`; }
+function noteActionKey(finding){ return `NOTE|${finding.id}`; }
 function newestRecord(items){ return items.filter(Boolean).sort((a,b)=>recordTimestamp(b)-recordTimestamp(a))[0]; }
 
 function render(){
@@ -23,6 +24,7 @@ function render(){
   const latestInventory=["PHC 1","PHC 2"].map(bag=>newestRecord([savedLatest[bag],...unique.filter(record=>record.bag===bag&&record.quantities)])).filter(Boolean);
   const actions=loadRestockActions();
   const lowItems=latestInventory.flatMap(record=>recordLowItems(record).map((item,index)=>({...item,bag:record.bag,shift:record.shift,date:record.date,recordId:record.id,findingId:`${record.id}-F${String(index+1).padStart(3,"0")}`,key:shortageKey(record,item)}))).filter(item=>!actions[item.key]);
+  const pendingNotes=findings.filter(finding=>finding.status==="Belum diambil tindakan"&&!actions[noteActionKey(finding)]);
   const pending=loadPendingSync().length;
   const bagCard=bag=>`<article class="card bag-card"><div class="bag-title"><span class="bag-badge">▣</span><h3>Beg ${bag}</h3></div><div class="shift-list">${SHIFTS.map(shift=>`<div class="shift-row"><span>${shift}</span>${statusIcon(completed.has(`${bag}-${shift}`))}</div>`).join("")}</div></article>`;
   content.innerHTML=`
@@ -31,10 +33,11 @@ function render(){
     <section class="card next-card"><span class="label">TINDAKAN SETERUSNYA</span>${next?`<h2>${next.replace("-"," · Shift ")}</h2><p>Pemeriksaan ini masih belum dilengkapkan.</p>`:`<h2>Semua pemeriksaan lengkap</h2><p>Semua beg dan shift sudah disemak hari ini.</p>`}</section>
     <section class="card status-summary"><div class="section-head"><h2>Status Hari Ini</h2><span class="state-dot ${completed.size===6?"done":"pending"}">${completed.size===6?"✓":"!"}</span></div><div class="progress-row"><div class="progress-ring" style="--progress:${Math.round(completed.size/6*100)}%"><strong>${completed.size}/6</strong></div><div class="progress-copy"><strong>${completed.size} pemeriksaan selesai</strong><small>2 beg × 3 shift setiap hari</small></div></div></section>
     <section class="bag-grid">${bagCard("PHC 1")}${bagCard("PHC 2")}</section>
-    <button class="card alert-card" id="restockButton"><span class="alert-icon">⚠</span><span><strong>${lowItems.length} item perlu restock</strong><small>Tekan untuk lihat senarai</small></span><b>›</b></button>
+    <section class="action-grid"><button class="card action-card restock-card" id="restockButton"><span class="action-icon">⚠</span><span><strong>Restock</strong><small>${lowItems.length} item</small></span><b>›</b></button><button class="card action-card note-card ${pendingNotes.length?"has-pending":""}" id="notesButton"><span class="action-icon">✎</span><span><strong>Tindakan Catatan</strong><small>${pendingNotes.length} catatan</small></span>${pendingNotes.length?`<em class="action-badge">${pendingNotes.length}</em>`:""}<b>›</b></button></section>
     <section class="card week-card"><div class="section-head"><h2>Rekod Minggu Ini</h2><a href="records.html">Lihat semua</a></div><div class="week-strip">${weekDays.map((date,i)=>{const status=weekStatus(date); return `<div class="week-day"><span>${shortDay[i]}</span><b class="${status}">${status==="done"?"✓":status==="missing"?"×":"–"}</b></div>`}).join("")}</div></section>
     <button class="primary-cta" onclick="location.href='inspection.html'">＋ MULAKAN PEMERIKSAAN</button>`;
-  document.querySelector("#restockButton").addEventListener("click",()=>showRestock(lowItems)); updateClock();
+  document.querySelector("#restockButton").addEventListener("click",()=>showRestock(lowItems));
+  document.querySelector("#notesButton").addEventListener("click",()=>showNoteActions(pendingNotes)); updateClock();
 }
 
 function showRestock(lowItems){
@@ -42,21 +45,38 @@ function showRestock(lowItems){
   restockModal.hidden=false;
   restockModal.innerHTML=`<section class="modal restock-modal" role="dialog" aria-modal="true" aria-label="Item perlu restock"><div class="modal-handle"></div><div class="modal-head"><div><p class="eyebrow">AMARAN STOK</p><h2>Item Perlu Restock</h2></div><button class="modal-close" aria-label="Tutup">×</button></div><p class="restock-help">Semak semua item di bawah. Tekan butang selepas semuanya dimasukkan semula ke dalam beg.</p><div class="restock-table">${lowItems.map(item=>`<div class="restock-table-row"><div class="restock-summary"><span><strong>${esc(item.name)}</strong><small>Standard ${item.standard} · ${item.bag} · ${item.shift}</small></span><span class="restock-qty">${item.qty}/${item.standard}</span></div></div>`).join("")}</div><button class="button primary full restock-all" id="completeAllRestock">✓ Semua Stok Telah Ditambah</button></section>`;
 }
+function showNoteActions(notes){
+  if(!notes.length){ alert("Tiada catatan memerlukan tindakan."); return; }
+  restockModal.hidden=false;
+  restockModal.innerHTML=`<section class="modal note-modal" role="dialog" aria-modal="true" aria-label="Tindakan catatan"><div class="modal-handle"></div><div class="modal-head"><div><p class="eyebrow">CATATAN</p><h2>Tindakan Catatan</h2></div><button class="modal-close" aria-label="Tutup">×</button></div><p class="restock-help">Pilih satu status bagi setiap catatan.</p><div class="note-action-list">${notes.map(note=>`<article class="note-action-row"><div class="note-meta"><strong>${esc(note.bagShift)}</strong><small>${esc(note.date)}</small></div><p>${esc(note.note)}</p><div class="note-status-buttons"><button data-note-id="${esc(note.id)}" data-note-status="Telah diambil tindakan">Telah diambil tindakan</button><button data-note-id="${esc(note.id)}" data-note-status="Telah diambil maklum">Telah diambil maklum</button></div></article>`).join("")}</div></section>`;
+}
 function updateClock(){ const el=document.querySelector("#liveTime"); if(el) el.textContent=new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:true}).format(new Date()); }
 
 async function refresh(){
   if(!apiConfigured()){ connectionMessage="Google Sheet belum disambungkan."; render(); return; }
   await Promise.all([syncPendingInspections(),syncPendingRestockActions()]);
   try{
-    const remote=await fetchRecords(isoDate(weekDays[0]),isoDate(weekDays[6]));
+    const [remote,remoteFindings]=await Promise.all([fetchRecords(isoDate(weekDays[0]),isoDate(weekDays[6])),fetchFindings(isoDate(weekDays[0]),isoDate(weekDays[6]))]);
     remote.forEach(record=>{ upsertLocalRecord(record); if(record.quantities) saveLatestInventory(record); });
-    records=loadRecords(); connectionMessage="";
+    records=loadRecords(); findings=remoteFindings; connectionMessage="";
   }catch(error){ connectionMessage=`Paparan menggunakan rekod peranti: ${error.message}`; }
   render();
 }
 
 restockModal.addEventListener("click",async event=>{
   if(event.target===restockModal||event.target.closest(".modal-close")){ restockModal.hidden=true; return; }
+  const noteButton=event.target.closest("[data-note-status]");
+  if(noteButton){
+    const status=noteButton.dataset.noteStatus; const findingId=noteButton.dataset.noteId;
+    noteButton.closest(".note-status-buttons").querySelectorAll("button").forEach(button=>button.disabled=true);
+    saveRestockAction(`NOTE|${findingId}`,status,{findingId,status,syncStatus:"PENDING"});
+    connectionMessage="Menyimpan status catatan ke Google Sheet...";
+    const result=await syncPendingRestockActions().catch(()=>({pending:1}));
+    findings=findings.map(finding=>finding.id===findingId?{...finding,status}:finding);
+    restockModal.hidden=true;
+    connectionMessage=result.pending?"Status catatan disimpan pada telefon dan akan dihantar semula.":`Catatan ditanda: ${status}.`;
+    render(); return;
+  }
   const button=event.target.closest("#completeAllRestock"); if(!button) return;
   if(!confirm("Semua item yang disenaraikan telah ditambah ke dalam beg?")) return;
   button.disabled=true; button.textContent="Menyimpan...";
