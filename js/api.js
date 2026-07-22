@@ -57,7 +57,14 @@ export async function saveInspection(record){
   return {record:prepared,synced:false,message:"Rekod disimpan. Sync Google Sheet berjalan di belakang."};
 }
 
-export async function syncPendingRestockActions(){
+let restockSyncPromise=null;
+export function syncPendingRestockActions(){
+  if(restockSyncPromise) return restockSyncPromise;
+  restockSyncPromise=runRestockSync().finally(()=>{ restockSyncPromise=null; });
+  return restockSyncPromise;
+}
+
+async function runRestockSync(){
   const actions=loadRestockActions(); const pending=Object.entries(actions).filter(([,value])=>value.syncStatus!=="SYNCED"&&value.findingId);
   if(!configured()||!navigator.onLine) return {synced:0,pending:pending.length};
   let synced=0;

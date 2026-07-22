@@ -27,6 +27,7 @@ export const STORAGE_KEY = "phcProductionRecords";
 export const LATEST_INVENTORY_KEY = "phcProductionLatestInventory";
 export const PENDING_SYNC_KEY = "phcPendingSync";
 export const RESTOCK_ACTIONS_KEY = "phcRestockActions";
+export const FINDINGS_KEY = "phcFindings";
 
 export function categoriesForBag(bag){ return CATEGORIES.filter(category => bag === "PHC 1" || !category.phc1Only); }
 export function startOfWeek(input=new Date()){ const d=new Date(input); const day=d.getDay() || 7; d.setHours(0,0,0,0); d.setDate(d.getDate()-day+1); return d; }
@@ -44,6 +45,8 @@ export function saveLatestInventory(record){
 }
 export function loadRestockActions(){ try { return JSON.parse(localStorage.getItem(RESTOCK_ACTIONS_KEY)) || {}; } catch { return {}; } }
 export function saveRestockAction(key, action, details={}){ const actions=loadRestockActions(); actions[key]={...actions[key],...details,action:String(action||"").trim(),completedAt:actions[key]?.completedAt||new Date().toISOString()}; localStorage.setItem(RESTOCK_ACTIONS_KEY,JSON.stringify(actions)); return actions[key]; }
+export function loadFindings(){ try { return JSON.parse(localStorage.getItem(FINDINGS_KEY)) || []; } catch { return []; } }
+export function saveFindings(findings){ localStorage.setItem(FINDINGS_KEY,JSON.stringify(Array.isArray(findings)?findings:[])); }
 export function loadPendingSync(){ try { return JSON.parse(localStorage.getItem(PENDING_SYNC_KEY)) || []; } catch { return []; } }
 export function savePendingSync(records){ localStorage.setItem(PENDING_SYNC_KEY,JSON.stringify(records)); }
 export function getWeekDays(){ const monday=startOfWeek(); return Array.from({length:7},(_,i)=>{ const d=new Date(monday); d.setDate(monday.getDate()+i); return d; }); }

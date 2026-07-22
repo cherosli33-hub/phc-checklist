@@ -1,11 +1,11 @@
-import { SHIFTS, formatDate, getWeekDays, isoDate, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, recordLowItems, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
+import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, recordLowItems, saveFindings, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
 import { apiConfigured, fetchFindings, fetchRecords, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
 const weekDays=getWeekDays(); const now=new Date(); const today=isoDate(now);
 const shortDay=["Isn","Sel","Rab","Kha","Jum","Sab","Ahd"];
-let records=loadRecords(); let findings=[]; let connectionMessage="";
+let records=loadRecords(); let findings=loadFindings(); let connectionMessage="";
 
 function recordTimestamp(record){ return new Date(record.savedAt||`${record.date}T${record.time||"00:00"}`).getTime()||0; }
 function latestUniqueRecords(items){ const seen=new Set(); return [...items].sort((a,b)=>recordTimestamp(b)-recordTimestamp(a)).filter(record=>{ const key=record.checkKey||`${record.date}|${record.bag}|${record.shift}`; if(seen.has(key)) return false; seen.add(key); return true; }); }
@@ -52,15 +52,26 @@ function showNoteActions(notes){
 }
 function updateClock(){ const el=document.querySelector("#liveTime"); if(el) el.textContent=new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:true}).format(new Date()); }
 
-async function refresh(){
+let refreshPromise=null;
+function refresh(){
+  if(refreshPromise) return refreshPromise;
+  refreshPromise=runRefresh().finally(()=>{ refreshPromise=null; });
+  return refreshPromise;
+}
+
+async function runRefresh(){
   if(!apiConfigured()){ connectionMessage="Google Sheet belum disambungkan."; render(); return; }
-  await Promise.all([syncPendingInspections(),syncPendingRestockActions()]);
-  try{
-    const [remote,remoteFindings]=await Promise.all([fetchRecords(isoDate(weekDays[0]),isoDate(weekDays[6])),fetchFindings(isoDate(weekDays[0]),isoDate(weekDays[6]))]);
+  syncPendingInspections().catch(()=>{}); syncPendingRestockActions().catch(()=>{});
+  const from=isoDate(weekDays[0]); const to=isoDate(weekDays[6]);
+  const findingsRequest=fetchFindings(from,to).then(remoteFindings=>{
+    findings=remoteFindings; saveFindings(findings); connectionMessage=""; render();
+  });
+  const recordsRequest=fetchRecords(from,to).then(remote=>{
     remote.forEach(record=>{ upsertLocalRecord(record); if(record.quantities) saveLatestInventory(record); });
-    records=loadRecords(); findings=remoteFindings; connectionMessage="";
-  }catch(error){ connectionMessage=`Paparan menggunakan rekod peranti: ${error.message}`; }
-  render();
+    records=loadRecords(); connectionMessage=""; render();
+  });
+  const result=await Promise.allSettled([findingsRequest,recordsRequest]);
+  if(result.every(item=>item.status==="rejected")){ connectionMessage="Paparan menggunakan rekod peranti. Sambungan akan dicuba semula."; render(); }
 }
 
 restockModal.addEventListener("click",async event=>{
@@ -69,13 +80,16 @@ restockModal.addEventListener("click",async event=>{
   if(noteButton){
     const status=noteButton.dataset.noteStatus; const findingId=noteButton.dataset.noteId;
     noteButton.closest(".note-status-buttons").querySelectorAll("button").forEach(button=>button.disabled=true);
+    noteButton.classList.add("selected"); noteButton.textContent="✓ Disimpan";
     saveRestockAction(`NOTE|${findingId}`,status,{findingId,status,syncStatus:"PENDING"});
-    connectionMessage="Menyimpan status catatan ke Google Sheet...";
-    const result=await syncPendingRestockActions().catch(()=>({pending:1}));
     findings=findings.map(finding=>finding.id===findingId?{...finding,status}:finding);
-    restockModal.hidden=true;
-    connectionMessage=result.pending?"Status catatan disimpan pada telefon dan akan dihantar semula.":`Catatan ditanda: ${status}.`;
-    render(); return;
+    saveFindings(findings); connectionMessage=`Catatan ditanda: ${status}.`;
+    setTimeout(()=>{ restockModal.hidden=true; render(); },350);
+    syncPendingRestockActions().then(result=>{
+      connectionMessage=result.pending?"Status disimpan pada telefon dan akan dihantar semula.":`Catatan ditanda: ${status}.`;
+      render();
+    }).catch(()=>{ connectionMessage="Status disimpan pada telefon dan akan dihantar semula."; render(); });
+    return;
   }
   const button=event.target.closest("#completeAllRestock"); if(!button) return;
   if(!confirm("Semua item yang disenaraikan telah ditambah ke dalam beg?")) return;
