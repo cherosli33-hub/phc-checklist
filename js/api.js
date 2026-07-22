@@ -16,12 +16,12 @@ async function request(url, options={}){
 
 export function apiConfigured(){ return configured(); }
 
-export async function saveRestockResolution(findingId, action){
+export async function saveRestockResolution(findingId, action, status="Telah diambil tindakan"){
   if(!configured()) throw new Error("Google Sheet belum disambungkan.");
   return request(APPS_SCRIPT_URL,{
     method:"POST",
     headers:{"Content-Type":"text/plain;charset=utf-8"},
-    body:JSON.stringify({action:"resolveFinding",appVersion:APP_VERSION,findingId,resolution:action}),
+    body:JSON.stringify({action:"resolveFinding",appVersion:APP_VERSION,findingId,resolution:action,status}),
   });
 }
 
@@ -31,6 +31,14 @@ export async function fetchRecords(from,to){
   if(from) url.searchParams.set("from",from); if(to) url.searchParams.set("to",to);
   const data=await request(url.toString(),{cache:"no-store"});
   return Array.isArray(data.records)?data.records:[];
+}
+
+export async function fetchFindings(from,to){
+  if(!configured()) throw new Error("Google Sheet belum disambungkan.");
+  const url=new URL(APPS_SCRIPT_URL); url.searchParams.set("action","findings");
+  if(from) url.searchParams.set("from",from); if(to) url.searchParams.set("to",to);
+  const data=await request(url.toString(),{cache:"no-store"});
+  return Array.isArray(data.findings)?data.findings:[];
 }
 
 async function sendInspection(record){
@@ -53,7 +61,7 @@ export async function syncPendingRestockActions(){
   const actions=loadRestockActions(); const pending=Object.entries(actions).filter(([,value])=>value.syncStatus!=="SYNCED"&&value.findingId);
   if(!configured()||!navigator.onLine) return {synced:0,pending:pending.length};
   let synced=0;
-  for(const [key,value] of pending){ try{ await saveRestockResolution(value.findingId,value.action); saveRestockAction(key,value.action,{findingId:value.findingId,syncStatus:"SYNCED"}); synced++; }catch{} }
+  for(const [key,value] of pending){ try{ await saveRestockResolution(value.findingId,value.action,value.status||"Telah diambil tindakan"); saveRestockAction(key,value.action,{findingId:value.findingId,status:value.status||"Telah diambil tindakan",syncStatus:"SYNCED"}); synced++; }catch{} }
   return {synced,pending:pending.length-synced};
 }
 
