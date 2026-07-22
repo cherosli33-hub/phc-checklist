@@ -64,8 +64,12 @@ restockModal.addEventListener("click",async event=>{
   const activeItems=Object.values(latest).flatMap(record=>recordLowItems(record).map((item,index)=>({record,item,index,key:shortageKey(record,item),findingId:`${record.id}-F${String(index+1).padStart(3,"0")}`})));
   activeItems.forEach(({key,findingId})=>saveRestockAction(key,"Semua stok telah ditambah",{findingId,syncStatus:"PENDING"}));
   Object.values(latest).forEach(record=>{ const copy=structuredClone(record); Object.values(copy.quantities||{}).forEach(group=>(group.items||[]).forEach(item=>{ if(item.qty<item.standard) item.qty=item.standard; })); copy.id=`${record.id}-RESTOCK-${Date.now()}`; copy.savedAt=stamp; saveLatestInventory(copy); });
-  restockModal.hidden=true; connectionMessage="Stok dikemas kini. Sync Google Sheet berjalan di belakang."; render();
-  syncPendingRestockActions().catch(()=>{});
+  restockModal.hidden=true; connectionMessage="Stok dikemas kini. Menghantar tindakan ke Google Sheet..."; render();
+  const result=await syncPendingRestockActions().catch(()=>({synced:0,pending:activeItems.length}));
+  connectionMessage=result.pending
+    ? "Stok sudah dikemas kini pada telefon. Tindakan akan dihantar semula secara automatik."
+    : "Restock telah direkodkan dalam Google Sheet sebagai Telah diambil tindakan.";
+  render();
 });
 window.addEventListener("online",refresh); window.addEventListener("pageshow",event=>{ if(event.persisted) refresh(); });
 render(); setInterval(updateClock,30000); refresh();

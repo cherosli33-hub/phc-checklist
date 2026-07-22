@@ -72,13 +72,26 @@ export function syncPendingInspections(){
 
 async function runInspectionSync(){
   if(!configured() || !navigator.onLine) return {synced:0,pending:loadPendingSync().length};
-  let synced=0;
-  while(navigator.onLine){
-    const record=loadPendingSync()[0]; if(!record) break;
+  let synced=0; const queue=[...loadPendingSync()];
+  for(const record of queue){
+    if(!navigator.onLine) break;
     try{
       const saved=await sendInspection(record); upsertLocalRecord(saved); saveLatestInventory(saved);
       savePendingSync(loadPendingSync().filter(item=>item.id!==record.id)); synced+=1;
-    }catch{ break; }
+    }catch{
+      // Rekod lama mungkin sudah berada dalam Sheet tetapi respons sync terdahulu
+      // tidak sempat diterima oleh telefon. Sahkan melalui checkKey sebelum membuangnya.
+      try{
+        const remote=await fetchRecords(record.date,record.date);
+        const existing=remote.find(item=>item.checkKey===record.checkKey);
+        const remoteTime=new Date(existing?.savedAt||0).getTime();
+        const localTime=new Date(record.savedAt||0).getTime();
+        if(existing && remoteTime>=localTime){
+          upsertLocalRecord(existing); if(existing.quantities) saveLatestInventory(existing);
+          savePendingSync(loadPendingSync().filter(item=>item.id!==record.id)); synced+=1;
+        }
+      }catch{}
+    }
   }
   return {synced,pending:loadPendingSync().length};
 }
