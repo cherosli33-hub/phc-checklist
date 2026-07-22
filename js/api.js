@@ -63,13 +63,22 @@ export function queueInspection(record){
   savePendingSync(pending);
 }
 
-export async function syncPendingInspections(){
+let inspectionSyncPromise=null;
+export function syncPendingInspections(){
+  if(inspectionSyncPromise) return inspectionSyncPromise;
+  inspectionSyncPromise=runInspectionSync().finally(()=>{ inspectionSyncPromise=null; });
+  return inspectionSyncPromise;
+}
+
+async function runInspectionSync(){
   if(!configured() || !navigator.onLine) return {synced:0,pending:loadPendingSync().length};
-  const pending=loadPendingSync(); const remaining=[]; let synced=0;
-  for(const record of pending){
-    try{ const saved=await sendInspection(record); upsertLocalRecord(saved); saveLatestInventory(saved); synced+=1; }
-    catch{ remaining.push(record); }
+  let synced=0;
+  while(navigator.onLine){
+    const record=loadPendingSync()[0]; if(!record) break;
+    try{
+      const saved=await sendInspection(record); upsertLocalRecord(saved); saveLatestInventory(saved);
+      savePendingSync(loadPendingSync().filter(item=>item.id!==record.id)); synced+=1;
+    }catch{ break; }
   }
-  savePendingSync(remaining);
-  return {synced,pending:remaining.length};
+  return {synced,pending:loadPendingSync().length};
 }
