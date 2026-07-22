@@ -1,4 +1,4 @@
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
@@ -316,7 +316,11 @@ function dataRows_(sheet, columns) { const last=sheet.getLastRow(); return last 
 function appendRows_(sheet, rows) { if(rows.length) sheet.getRange(sheet.getLastRow()+1,1,rows.length,rows[0].length).setValues(rows); }
 function idExists_(sheet, id) { if(sheet.getLastRow()<2) return false; return !!sheet.getRange(2,1,sheet.getLastRow()-1,1).createTextFinder(id).matchEntireCell(true).findNext(); }
 function findRowByValue_(sheet, column, value) { if(sheet.getLastRow()<2) return 0; const match=sheet.getRange(2,column,sheet.getLastRow()-1,1).createTextFinder(String(value)).matchEntireCell(true).findNext(); return match ? match.getRow() : 0; }
-function deleteRowsByValue_(sheet, column, value) { for(let row=sheet.getLastRow();row>=2;row--){ if(String(sheet.getRange(row,column).getValue())===String(value)) sheet.deleteRow(row); } }
+function deleteRowsByValue_(sheet, column, value) {
+  const columns = sheet.getLastColumn();
+  const kept = dataRows_(sheet, columns).filter(row => String(row[column - 1]) !== String(value));
+  rewriteData_(sheet, columns, kept);
+}
 function rewriteData_(sheet, columns, rows) { const existing=Math.max(0,sheet.getLastRow()-1); if(existing) sheet.getRange(2,1,existing,Math.max(columns,sheet.getLastColumn())).clearContent(); if(rows.length) sheet.getRange(2,1,rows.length,columns).setValues(rows.map(row=>row.slice(0,columns))); }
 function safeText_(value, max) { return String(value == null ? '' : value).replace(/[\u0000-\u001F\u007F]/g,' ').trim().slice(0,max); }
 function parseIsoDate_(text) { if(!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error('Tarikh tidak sah.'); const parts=text.split('-').map(Number); const date=new Date(`${text}T12:00:00+08:00`); if(Number.isNaN(date.getTime())||Number(Utilities.formatDate(date,TIME_ZONE,'yyyy'))!==parts[0]||Number(Utilities.formatDate(date,TIME_ZONE,'MM'))!==parts[1]||Number(Utilities.formatDate(date,TIME_ZONE,'dd'))!==parts[2]) throw new Error('Tarikh tidak sah.'); return date; }
