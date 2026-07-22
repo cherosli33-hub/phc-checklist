@@ -1,4 +1,4 @@
-export const APP_VERSION = "2.5.2";
+export const APP_VERSION = "2.5.3";
 
 // Isi URL deployment Google Apps Script selepas Sheet produksi dipasang
 // dalam akaun Google pemilik sistem.
