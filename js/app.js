@@ -1,3 +1,5 @@
+import { APP_VERSION } from "./config.js";
+
 export const CATEGORIES = [
   { id:"airway", name:"Airway & Ventilation", icon:"◉", items:[
     ["Nasal cannula (adult)",2],["Nasal cannula (paed)",2],["High flow mask (adult)",2],["High flow mask (paed)",2],["Nebulizer mask (adult)",2],["Nebulizer mask (paed)",2],["Oropharyngeal airway",5],["Nasopharyngeal airway",2],["Bag Valve Mask (adult)",1],["Bag Valve Mask (paed)",1],["BVM tubing",1],["Endotracheal tube size 7.0mm",1],["Endotracheal tube size 6.5mm",1],["Endotracheal tube size 7.5mm",1],["Endotracheal tube size 8.0mm",1],["Endotracheal tube size 5.0mm",1],["Endotracheal tube size 5.5mm",1],["Endotracheal tube size 6.0mm",1],["Stylet (adult)",1],["Stylet (paed)",1],["Laryngeal mask airway size 2",1],["Laryngeal mask airway size 3",1],["Laryngeal mask airway size 4",1],["Laryngoscope handle",1],["Laryngoscope blade size 2",1],["Laryngoscope blade size 3",1],["Laryngoscope blade size 4",1],["Lubrication gel",1],["Anchor tape",1],["10cc Syringe",2]
@@ -61,8 +63,43 @@ export function recordLowItems(record){ if(!record?.quantities) return []; retur
 
 export function registerServiceWorker(){
   if(typeof navigator==="undefined"||!("serviceWorker" in navigator)||location.protocol==="file:") return;
-  let refreshing=false;
-  navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(!refreshing){ refreshing=true; location.reload(); } });
-  window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js",{updateViaCache:"none"}).then(registration=>registration.update()).catch(()=>{}));
+  let refreshing=false; let registration;
+  const inspectionInProgress=()=>document.body?.dataset.page==="inspection"&&Boolean(document.querySelector(".checklist, #saveInspection"));
+  const reloadLatest=version=>{
+    if(refreshing) return;
+    if(inspectionInProgress()){
+      try{ sessionStorage.setItem("phcUpdatePending",String(version||APP_VERSION)); }catch{}
+      return;
+    }
+    refreshing=true;
+    const url=new URL(location.href); url.searchParams.set("app",String(version||Date.now()));
+    location.replace(url.toString());
+  };
+  const remoteVersion=async()=>{
+    const response=await fetch(`./js/config.js?update=${Date.now()}`,{cache:"no-store"});
+    if(!response.ok) return "";
+    const source=await response.text();
+    return source.match(/APP_VERSION\s*=\s*["']([^"']+)/)?.[1]||"";
+  };
+  const checkForUpdate=async()=>{
+    if(!navigator.onLine) return;
+    try{
+      if(registration) await registration.update();
+      const latest=await remoteVersion();
+      if(latest&&latest!==APP_VERSION) reloadLatest(latest);
+    }catch{}
+  };
+  navigator.serviceWorker.addEventListener("controllerchange",()=>reloadLatest());
+  navigator.serviceWorker.register(`./sw.js?v=${APP_VERSION}`,{updateViaCache:"none"}).then(value=>{
+    registration=value;
+    registration.addEventListener("updatefound",()=>{
+      const worker=registration.installing;
+      worker?.addEventListener("statechange",()=>{ if(worker.state==="installed"&&navigator.serviceWorker.controller) reloadLatest(); });
+    });
+    checkForUpdate();
+    setInterval(checkForUpdate,60000);
+  }).catch(()=>{});
+  ["online","focus","pageshow"].forEach(name=>window.addEventListener(name,checkForUpdate));
+  document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") checkForUpdate(); });
 }
 registerServiceWorker();
