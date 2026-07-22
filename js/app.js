@@ -36,6 +36,13 @@ export function formatDate(date, options={weekday:"long",day:"numeric",month:"lo
 export function loadRecords(){ try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; } }
 export function saveRecords(records){ localStorage.setItem(STORAGE_KEY,JSON.stringify(records)); }
 export function upsertLocalRecord(record){ const records=loadRecords(); const index=records.findIndex(item=>item.id===record.id); if(index>=0) records[index]=record; else records.unshift(record); saveRecords(records.slice(0,500)); return records; }
+export function reconcileRemoteRecords(remoteRecords,from,to){
+  const pendingIds=new Set(loadPendingSync().map(record=>record.id));
+  const retained=loadRecords().filter(record=>record.date<from||record.date>to||pendingIds.has(record.id));
+  const merged=[]; const seen=new Set();
+  [...(remoteRecords||[]),...retained].forEach(record=>{ if(record?.id&&!seen.has(record.id)){ seen.add(record.id); merged.push(record); } });
+  saveRecords(merged.slice(0,500)); return merged;
+}
 export function loadLatestInventory(){ try { return JSON.parse(localStorage.getItem(LATEST_INVENTORY_KEY)) || {}; } catch { return {}; } }
 function recordTime(record){ return new Date(record?.savedAt||`${record?.date||""}T${record?.time||"00:00"}`).getTime()||0; }
 export function saveLatestInventory(record){
