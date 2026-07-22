@@ -15,6 +15,14 @@ function esc(value=""){ return String(value).replace(/[&<>'"]/g,c=>({"&":"&amp;"
 function shortageKey(record,item){ return `${record.id}|${item.name}`; }
 function noteActionKey(finding){ return `NOTE|${finding.id}`; }
 function newestRecord(items){ return items.filter(Boolean).sort((a,b)=>recordTimestamp(b)-recordTimestamp(a))[0]; }
+function noteFinding(record){ return {id:`${record.id}-NOTE`,inspectionId:record.id,date:record.date,bagShift:`${record.bag} / ${record.shift}`,note:record.notes,action:"",actionAt:"",status:"Belum diambil tindakan"}; }
+function mergeFindings(remoteFindings,sourceRecords=[]){
+  const merged=new Map((remoteFindings||[]).map(finding=>[finding.id,finding]));
+  const pendingIds=new Set(loadPendingSync().filter(record=>record.notes).map(record=>`${record.id}-NOTE`));
+  findings.filter(finding=>pendingIds.has(finding.id)).forEach(finding=>{ if(!merged.has(finding.id)) merged.set(finding.id,finding); });
+  sourceRecords.filter(record=>record.notes).forEach(record=>{ const local=noteFinding(record); if(!merged.has(local.id)) merged.set(local.id,local); });
+  return [...merged.values()];
+}
 
 function render(){
   const unique=latestUniqueRecords(records); const todayRecords=unique.filter(record=>record.date===today);
@@ -61,17 +69,21 @@ function refresh(){
 
 async function runRefresh(){
   if(!apiConfigured()){ connectionMessage="Google Sheet belum disambungkan."; render(); return; }
-  syncPendingInspections().catch(()=>{}); syncPendingRestockActions().catch(()=>{});
+  const inspectionSync=syncPendingInspections().catch(()=>({synced:0})); syncPendingRestockActions().catch(()=>{});
   const from=isoDate(weekDays[0]); const to=isoDate(weekDays[6]);
   const findingsRequest=fetchFindings(from,to).then(remoteFindings=>{
-    findings=remoteFindings; saveFindings(findings); connectionMessage=""; render();
+    findings=mergeFindings(remoteFindings); saveFindings(findings); connectionMessage=""; render();
   });
   const recordsRequest=fetchRecords(from,to).then(remote=>{
     remote.forEach(record=>{ upsertLocalRecord(record); if(record.quantities) saveLatestInventory(record); });
-    records=loadRecords(); connectionMessage=""; render();
+    records=loadRecords(); findings=mergeFindings(findings,remote); saveFindings(findings); connectionMessage=""; render();
   });
   const result=await Promise.allSettled([findingsRequest,recordsRequest]);
   if(result.every(item=>item.status==="rejected")){ connectionMessage="Paparan menggunakan rekod peranti. Sambungan akan dicuba semula."; render(); }
+  inspectionSync.then(syncResult=>{
+    if(!syncResult.synced) return;
+    fetchFindings(from,to).then(remoteFindings=>{ findings=mergeFindings(remoteFindings); saveFindings(findings); render(); }).catch(()=>{});
+  });
 }
 
 restockModal.addEventListener("click",async event=>{
