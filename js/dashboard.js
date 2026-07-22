@@ -1,5 +1,5 @@
 import { SHIFTS, formatDate, getWeekDays, isoDate, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, recordLowItems, saveLatestInventory, saveRestockAction, upsertLocalRecord } from "./app.js";
-import { apiConfigured, fetchRecords, saveRestockResolution, syncPendingInspections } from "./api.js";
+import { apiConfigured, fetchRecords, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
@@ -40,13 +40,13 @@ function render(){
 function showRestock(lowItems){
   if(!lowItems.length){ alert("Tiada item perlu restock."); return; }
   restockModal.hidden=false;
-  restockModal.innerHTML=`<section class="modal restock-modal" role="dialog" aria-modal="true" aria-label="Item perlu restock"><div class="modal-handle"></div><div class="modal-head"><div><p class="eyebrow">AMARAN STOK</p><h2>Item Perlu Restock</h2></div><button class="modal-close" aria-label="Tutup">×</button></div><p class="restock-help">Catat tindakan selepas stok diambil, kemudian tekan <strong>Selesai</strong>.</p><div class="restock-table">${lowItems.map(item=>`<div class="restock-table-row" data-restock-key="${esc(item.key)}" data-finding-id="${esc(item.findingId)}"><div class="restock-summary"><span><strong>${esc(item.name)}</strong><small>Standard ${item.standard} · ${item.bag} · ${item.shift}</small></span><span class="restock-qty">${item.qty}/${item.standard}</span></div><div class="restock-action"><label>Tindakan diambil</label><div><input class="restock-action-input" placeholder="Contoh: Stok telah ditambah" maxlength="200"><button class="restock-done" data-complete-restock="${esc(item.key)}">Selesai</button></div></div></div>`).join("")}</div></section>`;
+  restockModal.innerHTML=`<section class="modal restock-modal" role="dialog" aria-modal="true" aria-label="Item perlu restock"><div class="modal-handle"></div><div class="modal-head"><div><p class="eyebrow">AMARAN STOK</p><h2>Item Perlu Restock</h2></div><button class="modal-close" aria-label="Tutup">×</button></div><p class="restock-help">Semak semua item di bawah. Tekan butang selepas semuanya dimasukkan semula ke dalam beg.</p><div class="restock-table">${lowItems.map(item=>`<div class="restock-table-row"><div class="restock-summary"><span><strong>${esc(item.name)}</strong><small>Standard ${item.standard} · ${item.bag} · ${item.shift}</small></span><span class="restock-qty">${item.qty}/${item.standard}</span></div></div>`).join("")}</div><button class="button primary full restock-all" id="completeAllRestock">✓ Semua Stok Telah Ditambah</button></section>`;
 }
 function updateClock(){ const el=document.querySelector("#liveTime"); if(el) el.textContent=new Intl.DateTimeFormat("ms-MY",{hour:"2-digit",minute:"2-digit",hour12:true}).format(new Date()); }
 
 async function refresh(){
   if(!apiConfigured()){ connectionMessage="Google Sheet belum disambungkan."; render(); return; }
-  await syncPendingInspections();
+  await Promise.all([syncPendingInspections(),syncPendingRestockActions()]);
   try{
     const remote=await fetchRecords(isoDate(weekDays[0]),isoDate(weekDays[6]));
     remote.forEach(record=>{ upsertLocalRecord(record); if(record.quantities) saveLatestInventory(record); });
@@ -57,14 +57,15 @@ async function refresh(){
 
 restockModal.addEventListener("click",async event=>{
   if(event.target===restockModal||event.target.closest(".modal-close")){ restockModal.hidden=true; return; }
-  const button=event.target.closest("[data-complete-restock]"); if(!button) return;
-  const row=button.closest("[data-restock-key]"); const input=row.querySelector(".restock-action-input"); const action=input.value.trim();
-  if(!action){ input.focus(); input.classList.add("invalid"); return; }
-  button.disabled=true; button.textContent="Simpan...";
-  saveRestockAction(button.dataset.completeRestock,action);
-  try{ await saveRestockResolution(row.dataset.findingId,action); }catch(error){ connectionMessage=`Tindakan disimpan pada peranti: ${error.message}`; }
-  row.remove(); render();
-  if(!restockModal.querySelector("[data-restock-key]")) restockModal.hidden=true;
+  const button=event.target.closest("#completeAllRestock"); if(!button) return;
+  if(!confirm("Semua item yang disenaraikan telah ditambah ke dalam beg?")) return;
+  button.disabled=true; button.textContent="Menyimpan...";
+  const latest=loadLatestInventory(); const stamp=new Date().toISOString();
+  const activeItems=Object.values(latest).flatMap(record=>recordLowItems(record).map((item,index)=>({record,item,index,key:shortageKey(record,item),findingId:`${record.id}-F${String(index+1).padStart(3,"0")}`})));
+  activeItems.forEach(({key,findingId})=>saveRestockAction(key,"Semua stok telah ditambah",{findingId,syncStatus:"PENDING"}));
+  Object.values(latest).forEach(record=>{ const copy=structuredClone(record); Object.values(copy.quantities||{}).forEach(group=>(group.items||[]).forEach(item=>{ if(item.qty<item.standard) item.qty=item.standard; })); copy.id=`${record.id}-RESTOCK-${Date.now()}`; copy.savedAt=stamp; saveLatestInventory(copy); });
+  restockModal.hidden=true; connectionMessage="Stok dikemas kini. Sync Google Sheet berjalan di belakang."; render();
+  syncPendingRestockActions().catch(()=>{});
 });
 window.addEventListener("online",refresh); window.addEventListener("pageshow",event=>{ if(event.persisted) refresh(); });
 render(); setInterval(updateClock,30000); refresh();

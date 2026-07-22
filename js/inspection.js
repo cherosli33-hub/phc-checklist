@@ -1,4 +1,4 @@
-import { categoriesForBag, isoDate, loadRecords } from "./app.js";
+import { categoriesForBag, isoDate, loadLatestInventory, loadRecords } from "./app.js";
 import { saveInspection } from "./api.js";
 
 const root=document.querySelector("#inspectionApp");
@@ -8,7 +8,7 @@ const state={stage:"setup",bag:"",ppp:"",shift:"",categoryIndex:0,quantities:{},
 function toast(message){ const el=document.querySelector("#toast"); el.textContent=message; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),2200); }
 function esc(value=""){ return String(value).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])); }
 function buildQuantities(mode){
-  const categories=categoriesForBag(state.bag); const last=loadRecords().find(record=>record.bag===state.bag && record.quantities && Object.keys(record.quantities).length);
+  const categories=categoriesForBag(state.bag); const last=loadLatestInventory()[state.bag]||loadRecords().find(record=>record.bag===state.bag && record.quantities && Object.keys(record.quantities).length);
   state.startMode=mode; state.quantities={}; categories.forEach(category=>{ const previous=mode==="copy"?last?.quantities?.[category.id]?.items:null; state.quantities[category.id]={items:category.items.map(([name,standard])=>({name,standard,qty:Math.min(standard,previous?.find(item=>item.name===name)?.qty ?? standard)}))}; });
 }
 
@@ -33,7 +33,7 @@ function render(){ if(state.stage==="setup") renderSetup(); else if(state.stage=
 root.addEventListener("click",async event=>{
   const bag=event.target.closest("[data-bag]"); if(bag){ state.bag=bag.dataset.bag; state.ppp=document.querySelector("#pppName")?.value||state.ppp; render(); return; }
   const shift=event.target.closest("[data-shift]"); if(shift){ state.shift=shift.dataset.shift; state.ppp=document.querySelector("#pppName")?.value||state.ppp; render(); return; }
-  const startButton=event.target.closest("[data-start-mode]"); if(startButton){ state.ppp=document.querySelector("#pppName").value.trim(); if(!state.ppp){ document.querySelector("#pppName").focus(); toast("Masukkan nama PPP dahulu."); return; } buildQuantities(startButton.dataset.startMode); state.stage="category"; render(); return; }
+  const startButton=event.target.closest("[data-start-mode]"); if(startButton){ state.ppp=document.querySelector("#pppName").value.trim(); if(!state.ppp){ document.querySelector("#pppName").focus(); toast("Masukkan nama PPP dahulu."); return; } buildQuantities(startButton.dataset.startMode); state.stage=startButton.dataset.startMode==="copy"?"review":"category"; render(); return; }
   const step=event.target.closest("[data-step]"); if(step){ const item=state.quantities[step.dataset.category].items[Number(step.dataset.index)]; item.qty=Math.min(item.standard,Math.max(0,item.qty+Number(step.dataset.step))); renderCategory(); return; }
   if(event.target.closest("#previousStep")){ if(state.categoryIndex===0){ state.stage="setup"; } else state.categoryIndex--; render(); return; }
   if(event.target.closest("#nextStep")){ const total=categoriesForBag(state.bag).length; if(state.categoryIndex<total-1) state.categoryIndex++; else state.stage="review"; render(); return; }
