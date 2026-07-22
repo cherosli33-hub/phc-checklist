@@ -16,6 +16,15 @@ async function request(url, options={}){
 
 export function apiConfigured(){ return configured(); }
 
+export async function saveRestockResolution(findingId, action){
+  if(!configured()) throw new Error("Google Sheet belum disambungkan.");
+  return request(APPS_SCRIPT_URL,{
+    method:"POST",
+    headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body:JSON.stringify({action:"resolveFinding",appVersion:APP_VERSION,findingId,resolution:action}),
+  });
+}
+
 export async function fetchRecords(from,to){
   if(!configured()) throw new Error("Google Sheet belum disambungkan.");
   const url=new URL(APPS_SCRIPT_URL); url.searchParams.set("action","records");

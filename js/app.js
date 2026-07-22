@@ -26,6 +26,7 @@ export const SHIFTS = ["Pagi","Petang","Malam"];
 export const STORAGE_KEY = "phcProductionRecords";
 export const LATEST_INVENTORY_KEY = "phcProductionLatestInventory";
 export const PENDING_SYNC_KEY = "phcPendingSync";
+export const RESTOCK_ACTIONS_KEY = "phcRestockActions";
 
 export function categoriesForBag(bag){ return CATEGORIES.filter(category => bag === "PHC 1" || !category.phc1Only); }
 export function startOfWeek(input=new Date()){ const d=new Date(input); const day=d.getDay() || 7; d.setHours(0,0,0,0); d.setDate(d.getDate()-day+1); return d; }
@@ -35,7 +36,14 @@ export function loadRecords(){ try { return JSON.parse(localStorage.getItem(STOR
 export function saveRecords(records){ localStorage.setItem(STORAGE_KEY,JSON.stringify(records)); }
 export function upsertLocalRecord(record){ const records=loadRecords(); const index=records.findIndex(item=>item.id===record.id); if(index>=0) records[index]=record; else records.unshift(record); saveRecords(records.slice(0,500)); return records; }
 export function loadLatestInventory(){ try { return JSON.parse(localStorage.getItem(LATEST_INVENTORY_KEY)) || {}; } catch { return {}; } }
-export function saveLatestInventory(record){ const latest=loadLatestInventory(); latest[record.bag]=record; localStorage.setItem(LATEST_INVENTORY_KEY,JSON.stringify(latest)); }
+function recordTime(record){ return new Date(record?.savedAt||`${record?.date||""}T${record?.time||"00:00"}`).getTime()||0; }
+export function saveLatestInventory(record){
+  const latest=loadLatestInventory(); const current=latest[record.bag];
+  if(!current || recordTime(record)>=recordTime(current)) latest[record.bag]=record;
+  localStorage.setItem(LATEST_INVENTORY_KEY,JSON.stringify(latest));
+}
+export function loadRestockActions(){ try { return JSON.parse(localStorage.getItem(RESTOCK_ACTIONS_KEY)) || {}; } catch { return {}; } }
+export function saveRestockAction(key, action){ const actions=loadRestockActions(); actions[key]={action:String(action||"").trim(),completedAt:new Date().toISOString()}; localStorage.setItem(RESTOCK_ACTIONS_KEY,JSON.stringify(actions)); return actions[key]; }
 export function loadPendingSync(){ try { return JSON.parse(localStorage.getItem(PENDING_SYNC_KEY)) || []; } catch { return []; } }
 export function savePendingSync(records){ localStorage.setItem(PENDING_SYNC_KEY,JSON.stringify(records)); }
 export function getWeekDays(){ const monday=startOfWeek(); return Array.from({length:7},(_,i)=>{ const d=new Date(monday); d.setDate(monday.getDate()+i); return d; }); }
