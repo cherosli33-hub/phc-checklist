@@ -123,5 +123,5 @@ window.addEventListener("pageshow",refresh);
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") refresh(); });
 render();
 setInterval(updateClock,30000);
-setInterval(()=>{ if(document.visibilityState==="visible") refresh(); },30000);
+setInterval(()=>{ if(document.visibilityState==="visible") refresh(); },5000);
 refresh();
