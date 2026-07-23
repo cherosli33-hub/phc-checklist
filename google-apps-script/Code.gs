@@ -1,4 +1,4 @@
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.5.8';
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
@@ -13,9 +13,9 @@ const VALID_SHIFTS = ['Pagi','Petang','Malam'];
 function doGet(e) {
   try {
     const action = String((e && e.parameter && e.parameter.action) || 'health');
-    if (action === 'health') return json_({ok:true, app:'PHC Checklist', version:APP_VERSION, time:new Date().toISOString()});
+    if (action === 'health') return json_(health_());
     if (action === 'records') return json_({ok:true, records:getRecords_(e.parameter.from, e.parameter.to)});
-    if (action === 'findings') return json_({ok:true, findings:getFindings_(e.parameter.from, e.parameter.to)});
+    if (action === 'findings') return json_({ok:true, findings:getFindings_(e.parameter.from, e.parameter.to, String(e.parameter.all || '') === '1')});
     return json_({ok:false, message:'Tindakan tidak dikenali.'});
   } catch (error) {
     return json_({ok:false, message:error.message || String(error)});
@@ -154,7 +154,18 @@ function getRecords_(fromText, toText) {
   }));
 }
 
-function getFindings_(fromText, toText) {
+function health_() {
+  const spreadsheet = getSpreadsheet_();
+  return {
+    ok:true, app:'PHC Checklist', version:APP_VERSION, time:new Date().toISOString(),
+    idTail:spreadsheet.getId().slice(-8),
+    timeZone:spreadsheet.getSpreadsheetTimeZone() || TIME_ZONE,
+    inspectionRows:Math.max(0, requiredSheet_(spreadsheet, SHEETS.inspections).getLastRow() - 1),
+    findingRows:Math.max(0, requiredSheet_(spreadsheet, SHEETS.findings).getLastRow() - 1),
+  };
+}
+
+function getFindings_(fromText, toText, includeAll) {
   const spreadsheet = getSpreadsheet_();
   const sheet = requiredSheet_(spreadsheet, SHEETS.findings);
   const fromKey = fromText ? safeText_(fromText, 10) : '2000-01-01';
@@ -162,10 +173,14 @@ function getFindings_(fromText, toText) {
   parseIsoDate_(fromKey); parseIsoDate_(toKey);
   return dataRows_(sheet, 14).filter(row => {
     const dateKey = formatIsoDate_(row[2]);
-    return row[0] && String(row[7]) === 'Catatan pengguna' && dateKey >= fromKey && dateKey <= toKey;
+    return row[0] && (includeAll || String(row[7]) === 'Catatan pengguna') && dateKey >= fromKey && dateKey <= toKey;
   }).map(row => ({
+    type:String(row[7]) === 'Catatan pengguna' ? 'note' : 'shortage',
     id:String(row[0]), inspectionId:String(row[1]), date:formatIsoDate_(row[2]),
-    bagShift:String(row[6]), note:String(row[12] || ''), action:String(row[10] || ''),
+    bagShift:String(row[6]), item:String(row[7]) === 'Catatan pengguna' ? '' : String(row[7] || ''),
+    qty:String(row[7]) === 'Catatan pengguna' ? null : Number(row[8]),
+    standard:String(row[7]) === 'Catatan pengguna' ? null : Number(row[9]),
+    note:String(row[7]) === 'Catatan pengguna' ? String(row[12] || '') : '', action:String(row[10] || ''),
     actionAt:row[11] ? normaliseDateTime_(row[11]) : '', status:String(row[13] || 'Belum diambil tindakan'),
   }));
 }

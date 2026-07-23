@@ -7,8 +7,16 @@ async function request(url, options={}){
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),API_TIMEOUT_MS);
   try{
-    const response=await fetch(url,{...options,signal:controller.signal,redirect:"follow"});
-    const data=await response.json();
+    const response=await fetch(url,{cache:"no-store",...options,signal:controller.signal,redirect:"follow"});
+    const body=await response.text();
+    let data;
+    try{ data=JSON.parse(body); }
+    catch{
+      const googlePage=response.redirected||/^\s*</.test(body);
+      throw new Error(googlePage
+        ? "Respons Google bukan data aplikasi. Semak deployment Apps Script dan pastikan akses ditetapkan kepada Anyone."
+        : "Respons pelayan tidak sah.");
+    }
     if(!response.ok || data.ok===false) throw new Error(data.message||`Ralat pelayan (${response.status})`);
     return data;
   } finally { clearTimeout(timer); }
@@ -29,6 +37,7 @@ export async function fetchRecords(from,to){
   if(!configured()) throw new Error("Google Sheet belum disambungkan.");
   const url=new URL(APPS_SCRIPT_URL); url.searchParams.set("action","records");
   if(from) url.searchParams.set("from",from); if(to) url.searchParams.set("to",to);
+  url.searchParams.set("_ts",String(Date.now()));
   const data=await request(url.toString(),{cache:"no-store"});
   return Array.isArray(data.records)?data.records:[];
 }
@@ -37,6 +46,7 @@ export async function fetchFindings(from,to){
   if(!configured()) throw new Error("Google Sheet belum disambungkan.");
   const url=new URL(APPS_SCRIPT_URL); url.searchParams.set("action","findings");
   if(from) url.searchParams.set("from",from); if(to) url.searchParams.set("to",to);
+  url.searchParams.set("all","1"); url.searchParams.set("_ts",String(Date.now()));
   const data=await request(url.toString(),{cache:"no-store"});
   return Array.isArray(data.findings)?data.findings:[];
 }

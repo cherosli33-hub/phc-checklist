@@ -3,9 +3,16 @@ import { apiConfigured, fetchFindings, fetchRecords, syncPendingInspections, syn
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
-const weekDays=getWeekDays(); const now=new Date(); const today=isoDate(now);
+let weekDays=[]; let now=new Date(); let today="";
 const shortDay=["Isn","Sel","Rab","Kha","Jum","Sab","Ahd"];
 let records=loadRecords(); let findings=loadFindings(); let connectionMessage="";
+
+function refreshDateWindow(){
+  const previous=today;
+  now=new Date(); today=isoDate(now); weekDays=getWeekDays(now);
+  return Boolean(previous&&previous!==today);
+}
+refreshDateWindow();
 
 function recordTimestamp(record){ return new Date(record.savedAt||`${record.date}T${record.time||"00:00"}`).getTime()||0; }
 function latestUniqueRecords(items){ const seen=new Set(); return [...items].sort((a,b)=>recordTimestamp(b)-recordTimestamp(a)).filter(record=>{ const key=record.checkKey||`${record.date}|${record.bag}|${record.shift}`; if(seen.has(key)) return false; seen.add(key); return true; }); }
@@ -16,12 +23,27 @@ function shortageKey(record,item){ return `${record.id}|${item.name}`; }
 function noteActionKey(finding){ return `NOTE|${finding.id}`; }
 function newestRecord(items){ return items.filter(Boolean).sort((a,b)=>recordTimestamp(b)-recordTimestamp(a))[0]; }
 function noteFinding(record){ return {id:`${record.id}-NOTE`,inspectionId:record.id,date:record.date,bagShift:`${record.bag} / ${record.shift}`,note:record.notes,action:"",actionAt:"",status:"Belum diambil tindakan"}; }
-function mergeFindings(remoteFindings,sourceRecords=[]){
-  const merged=new Map((remoteFindings||[]).map(finding=>[finding.id,finding]));
+function mergeFindings(remoteFindings,sourceRecords=[],remoteIsAuthoritative=true){
+  const base=remoteIsAuthoritative?(remoteFindings||[]):loadFindings();
+  const merged=new Map(base.map(finding=>[finding.id,finding]));
   const pendingIds=new Set(loadPendingSync().filter(record=>record.notes).map(record=>`${record.id}-NOTE`));
-  findings.filter(finding=>pendingIds.has(finding.id)).forEach(finding=>{ if(!merged.has(finding.id)) merged.set(finding.id,finding); });
-  sourceRecords.filter(record=>record.notes).forEach(record=>{ const local=noteFinding(record); if(!merged.has(local.id)) merged.set(local.id,local); });
+  loadFindings().filter(finding=>pendingIds.has(finding.id)).forEach(finding=>{ if(!merged.has(finding.id)) merged.set(finding.id,finding); });
+  sourceRecords.filter(record=>record.notes&&(!remoteIsAuthoritative||pendingIds.has(`${record.id}-NOTE`))).forEach(record=>{ const local=noteFinding(record); if(!merged.has(local.id)) merged.set(local.id,local); });
   return [...merged.values()];
+}
+
+function shortageFinding(record,item){
+  return findings.find(finding=>finding.type==="shortage"&&finding.inspectionId===record.id&&finding.item===item.name);
+}
+
+function currentLowItems(latestInventory){
+  const actions=loadRestockActions();
+  return latestInventory.flatMap(record=>recordLowItems(record).map((item,index)=>{
+    const remote=shortageFinding(record,item);
+    return {...item,bag:record.bag,shift:record.shift,date:record.date,recordId:record.id,
+      findingId:remote?.id||`${record.id}-F${String(index+1).padStart(3,"0")}`,
+      findingStatus:remote?.status||"Belum diambil tindakan",key:shortageKey(record,item)};
+  })).filter(item=>item.findingStatus==="Belum diambil tindakan"&&!actions[item.key]);
 }
 
 function render(){
@@ -31,8 +53,8 @@ function render(){
   const next=expected.find(key=>!completed.has(key)); const savedLatest=loadLatestInventory();
   const latestInventory=["PHC 1","PHC 2"].map(bag=>newestRecord([savedLatest[bag],...unique.filter(record=>record.bag===bag&&record.quantities)])).filter(Boolean);
   const actions=loadRestockActions();
-  const lowItems=latestInventory.flatMap(record=>recordLowItems(record).map((item,index)=>({...item,bag:record.bag,shift:record.shift,date:record.date,recordId:record.id,findingId:`${record.id}-F${String(index+1).padStart(3,"0")}`,key:shortageKey(record,item)}))).filter(item=>!actions[item.key]);
-  const pendingNotes=findings.filter(finding=>finding.status==="Belum diambil tindakan"&&!actions[noteActionKey(finding)]);
+  const lowItems=currentLowItems(latestInventory);
+  const pendingNotes=findings.filter(finding=>finding.type!=="shortage"&&finding.note&&finding.status==="Belum diambil tindakan"&&!actions[noteActionKey(finding)]);
   const pending=loadPendingSync().length;
   const bagCard=bag=>`<article class="card bag-card"><div class="bag-title"><span class="bag-badge">▣</span><h3>Beg ${bag}</h3></div><div class="shift-list">${SHIFTS.map(shift=>`<div class="shift-row"><span>${shift}</span>${statusIcon(completed.has(`${bag}-${shift}`))}</div>`).join("")}</div></article>`;
   content.innerHTML=`
@@ -68,22 +90,26 @@ function refresh(){
 }
 
 async function runRefresh(){
+  refreshDateWindow();
   if(!apiConfigured()){ connectionMessage="Google Sheet belum disambungkan."; render(); return; }
   const inspectionSync=syncPendingInspections().catch(()=>({synced:0})); syncPendingRestockActions().catch(()=>{});
   const from=isoDate(weekDays[0]); const to=isoDate(weekDays[6]);
-  const findingsRequest=fetchFindings(from,to).then(remoteFindings=>{
-    findings=mergeFindings(remoteFindings); saveFindings(findings); connectionMessage=""; render();
-  });
-  const recordsRequest=fetchRecords(from,to).then(remote=>{
-    remote.forEach(record=>{ if(record.quantities) saveLatestInventory(record); });
-    records=reconcileRemoteRecords(remote,from,to); findings=mergeFindings(findings,records.filter(record=>record.date>=from&&record.date<=to)); saveFindings(findings); connectionMessage=""; render();
-  });
-  const result=await Promise.allSettled([findingsRequest,recordsRequest]);
-  if(result.every(item=>item.status==="rejected")){ connectionMessage="Paparan menggunakan rekod peranti. Sambungan akan dicuba semula."; render(); }
-  inspectionSync.then(syncResult=>{
-    if(!syncResult.synced) return;
-    fetchFindings(from,to).then(remoteFindings=>{ findings=mergeFindings(remoteFindings); saveFindings(findings); render(); }).catch(()=>{});
-  });
+  const [findingResult,recordResult]=await Promise.allSettled([fetchFindings(from,to),fetchRecords(from,to)]);
+  if(recordResult.status==="fulfilled"){
+    recordResult.value.forEach(record=>{ if(record.quantities) saveLatestInventory(record); });
+    records=reconcileRemoteRecords(recordResult.value,from,to);
+  }
+  const sourceRecords=records.filter(record=>record.date>=from&&record.date<=to);
+  findings=findingResult.status==="fulfilled"
+    ? mergeFindings(findingResult.value,sourceRecords,true)
+    : mergeFindings([],sourceRecords,false);
+  saveFindings(findings);
+  if(findingResult.status==="rejected"&&recordResult.status==="rejected") connectionMessage="Paparan menggunakan rekod peranti. Sambungan akan dicuba semula.";
+  else if(findingResult.status==="rejected"||recordResult.status==="rejected") connectionMessage="Sebahagian data belum diterima. Sambungan akan dicuba semula.";
+  else connectionMessage="";
+  render();
+  const syncResult=await inspectionSync;
+  if(syncResult.synced) setTimeout(refresh,0);
 }
 
 restockModal.addEventListener("click",async event=>{
@@ -107,7 +133,7 @@ restockModal.addEventListener("click",async event=>{
   if(!confirm("Semua item yang disenaraikan telah ditambah ke dalam beg?")) return;
   button.disabled=true; button.textContent="Menyimpan...";
   const latest=loadLatestInventory(); const stamp=new Date().toISOString();
-  const activeItems=Object.values(latest).flatMap(record=>recordLowItems(record).map((item,index)=>({record,item,index,key:shortageKey(record,item),findingId:`${record.id}-F${String(index+1).padStart(3,"0")}`})));
+  const activeItems=currentLowItems(Object.values(latest)).map(item=>({key:item.key,findingId:item.findingId}));
   activeItems.forEach(({key,findingId})=>saveRestockAction(key,"Semua stok telah ditambah",{findingId,syncStatus:"PENDING"}));
   Object.values(latest).forEach(record=>{ const copy=structuredClone(record); Object.values(copy.quantities||{}).forEach(group=>(group.items||[]).forEach(item=>{ if(item.qty<item.standard) item.qty=item.standard; })); copy.id=`${record.id}-RESTOCK-${Date.now()}`; copy.savedAt=stamp; saveLatestInventory(copy); });
   restockModal.hidden=true; connectionMessage="Stok dikemas kini. Menghantar tindakan ke Google Sheet..."; render();
@@ -117,10 +143,11 @@ restockModal.addEventListener("click",async event=>{
     : "Restock telah direkodkan dalam Google Sheet sebagai Telah diambil tindakan.";
   render();
 });
-window.addEventListener("online",refresh);
-window.addEventListener("focus",refresh);
-window.addEventListener("pageshow",refresh);
-document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") refresh(); });
+function resumeRefresh(){ refreshDateWindow(); render(); refresh(); }
+window.addEventListener("online",resumeRefresh);
+window.addEventListener("focus",resumeRefresh);
+window.addEventListener("pageshow",resumeRefresh);
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") resumeRefresh(); });
 render();
 setInterval(updateClock,30000);
 setInterval(()=>{ if(document.visibilityState==="visible") refresh(); },5000);
