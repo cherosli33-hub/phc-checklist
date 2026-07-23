@@ -51,6 +51,18 @@ export async function fetchFindings(from,to){
   return Array.isArray(data.findings)?data.findings:[];
 }
 
+export async function fetchDashboard(from,to){
+  if(!configured()) throw new Error("Google Sheet belum disambungkan.");
+  const url=new URL(APPS_SCRIPT_URL); url.searchParams.set("action","dashboard");
+  if(from) url.searchParams.set("from",from); if(to) url.searchParams.set("to",to);
+  url.searchParams.set("_ts",String(Date.now()));
+  const data=await request(url.toString(),{cache:"no-store"});
+  return {
+    records:Array.isArray(data.records)?data.records:[],
+    findings:Array.isArray(data.findings)?data.findings:[],
+  };
+}
+
 async function sendInspection(record){
   const data=await request(APPS_SCRIPT_URL,{
     method:"POST",

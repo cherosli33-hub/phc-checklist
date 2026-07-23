@@ -1,5 +1,5 @@
 import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, recordLowItems, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
-import { apiConfigured, fetchFindings, fetchRecords, syncPendingInspections, syncPendingRestockActions } from "./api.js";
+import { apiConfigured, fetchDashboard, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
@@ -94,19 +94,17 @@ async function runRefresh(){
   if(!apiConfigured()){ connectionMessage="Google Sheet belum disambungkan."; render(); return; }
   const inspectionSync=syncPendingInspections().catch(()=>({synced:0})); syncPendingRestockActions().catch(()=>{});
   const from=isoDate(weekDays[0]); const to=isoDate(weekDays[6]);
-  const [findingResult,recordResult]=await Promise.allSettled([fetchFindings(from,to),fetchRecords(from,to)]);
-  if(recordResult.status==="fulfilled"){
-    recordResult.value.forEach(record=>{ if(record.quantities) saveLatestInventory(record); });
-    records=reconcileRemoteRecords(recordResult.value,from,to);
+  const dashboardResult=await fetchDashboard(from,to).then(value=>({ok:true,value})).catch(error=>({ok:false,error}));
+  if(dashboardResult.ok){
+    dashboardResult.value.records.forEach(record=>{ if(record.quantities) saveLatestInventory(record); });
+    records=reconcileRemoteRecords(dashboardResult.value.records,from,to);
   }
   const sourceRecords=records.filter(record=>record.date>=from&&record.date<=to);
-  findings=findingResult.status==="fulfilled"
-    ? mergeFindings(findingResult.value,sourceRecords,true)
+  findings=dashboardResult.ok
+    ? mergeFindings(dashboardResult.value.findings,sourceRecords,true)
     : mergeFindings([],sourceRecords,false);
   saveFindings(findings);
-  if(findingResult.status==="rejected"&&recordResult.status==="rejected") connectionMessage="Paparan menggunakan rekod peranti. Sambungan akan dicuba semula.";
-  else if(findingResult.status==="rejected"||recordResult.status==="rejected") connectionMessage="Sebahagian data belum diterima. Sambungan akan dicuba semula.";
-  else connectionMessage="";
+  connectionMessage=dashboardResult.ok?"":"Paparan menggunakan rekod peranti. Sambungan akan dicuba semula.";
   render();
   const syncResult=await inspectionSync;
   if(syncResult.synced) setTimeout(refresh,0);

@@ -1,4 +1,4 @@
-const APP_VERSION = '2.5.8';
+const APP_VERSION = '2.5.9';
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
@@ -16,6 +16,7 @@ function doGet(e) {
     if (action === 'health') return json_(health_());
     if (action === 'records') return json_({ok:true, records:getRecords_(e.parameter.from, e.parameter.to)});
     if (action === 'findings') return json_({ok:true, findings:getFindings_(e.parameter.from, e.parameter.to, String(e.parameter.all || '') === '1')});
+    if (action === 'dashboard') return json_(getDashboard_(e.parameter.from, e.parameter.to));
     return json_({ok:false, message:'Tindakan tidak dikenali.'});
   } catch (error) {
     return json_({ok:false, message:error.message || String(error)});
@@ -49,7 +50,6 @@ function resolveFinding_(findingId, resolution, resolutionStatus) {
     action, new Date(), sheet.getRange(match.getRow(),13).getValue(), status
   ]]);
   sheet.getRange(match.getRow(),12).setNumberFormat('yyyy-mm-dd HH:mm');
-  updateMonthlyReport_(spreadsheet);
   SpreadsheetApp.flush();
   return {ok:true, findingId:id, status:status, savedAt:new Date().toISOString()};
 }
@@ -111,7 +111,6 @@ function saveInspection_(record, clientVersion) {
       ]);
     }
     appendRows_(findingSheet, findingRows);
-    applyProductionFormatting_(spreadsheet);
     SpreadsheetApp.flush();
     return {ok:true, id:checked.id, savedAt:new Date().toISOString(), itemCount:items.length, findingCount:findingRows.length};
   } finally {
@@ -119,8 +118,18 @@ function saveInspection_(record, clientVersion) {
   }
 }
 
-function getRecords_(fromText, toText) {
+function getDashboard_(fromText, toText) {
   const spreadsheet = getSpreadsheet_();
+  return {
+    ok:true,
+    version:APP_VERSION,
+    records:getRecords_(fromText, toText, spreadsheet),
+    findings:getFindings_(fromText, toText, true, spreadsheet),
+  };
+}
+
+function getRecords_(fromText, toText, sourceSpreadsheet) {
+  const spreadsheet = sourceSpreadsheet || getSpreadsheet_();
   const inspectionSheet = requiredSheet_(spreadsheet, SHEETS.inspections);
   const checkSheet = requiredSheet_(spreadsheet, SHEETS.checks);
   const fromKey = fromText ? safeText_(fromText, 10) : '2000-01-01';
@@ -165,8 +174,8 @@ function health_() {
   };
 }
 
-function getFindings_(fromText, toText, includeAll) {
-  const spreadsheet = getSpreadsheet_();
+function getFindings_(fromText, toText, includeAll, sourceSpreadsheet) {
+  const spreadsheet = sourceSpreadsheet || getSpreadsheet_();
   const sheet = requiredSheet_(spreadsheet, SHEETS.findings);
   const fromKey = fromText ? safeText_(fromText, 10) : '2000-01-01';
   const toKey = toText ? safeText_(toText, 10) : '2100-12-31';
@@ -354,9 +363,18 @@ function appendRows_(sheet, rows) { if(rows.length) sheet.getRange(sheet.getLast
 function idExists_(sheet, id) { if(sheet.getLastRow()<2) return false; return !!sheet.getRange(2,1,sheet.getLastRow()-1,1).createTextFinder(id).matchEntireCell(true).findNext(); }
 function findRowByValue_(sheet, column, value) { if(sheet.getLastRow()<2) return 0; const match=sheet.getRange(2,column,sheet.getLastRow()-1,1).createTextFinder(String(value)).matchEntireCell(true).findNext(); return match ? match.getRow() : 0; }
 function deleteRowsByValue_(sheet, column, value) {
-  const columns = sheet.getLastColumn();
-  const kept = dataRows_(sheet, columns).filter(row => String(row[column - 1]) !== String(value));
-  rewriteData_(sheet, columns, kept);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  const values = sheet.getRange(2, column, lastRow - 1, 1).getDisplayValues();
+  const rows = values.map((row, index) => String(row[0]) === String(value) ? index + 2 : 0).filter(Boolean);
+  if (!rows.length) return;
+  const groups = [];
+  rows.forEach(row => {
+    const current = groups[groups.length - 1];
+    if (current && row === current.start + current.count) current.count += 1;
+    else groups.push({start:row, count:1});
+  });
+  groups.reverse().forEach(group => sheet.deleteRows(group.start, group.count));
 }
 function rewriteData_(sheet, columns, rows) { const existing=Math.max(0,sheet.getLastRow()-1); if(existing) sheet.getRange(2,1,existing,Math.max(columns,sheet.getLastColumn())).clearContent(); if(rows.length) sheet.getRange(2,1,rows.length,columns).setValues(rows.map(row=>row.slice(0,columns))); }
 function safeText_(value, max) { return String(value == null ? '' : value).replace(/[\u0000-\u001F\u007F]/g,' ').trim().slice(0,max); }
