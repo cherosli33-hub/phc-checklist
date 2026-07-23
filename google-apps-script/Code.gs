@@ -123,12 +123,12 @@ function getDashboard_(fromText, toText) {
   return {
     ok:true,
     version:APP_VERSION,
-    records:getRecords_(fromText, toText, spreadsheet),
+    records:getRecords_(fromText, toText, spreadsheet, true),
     findings:getFindings_(fromText, toText, true, spreadsheet),
   };
 }
 
-function getRecords_(fromText, toText, sourceSpreadsheet) {
+function getRecords_(fromText, toText, sourceSpreadsheet, latestInventoryOnly) {
   const spreadsheet = sourceSpreadsheet || getSpreadsheet_();
   const inspectionSheet = requiredSheet_(spreadsheet, SHEETS.inspections);
   const checkSheet = requiredSheet_(spreadsheet, SHEETS.checks);
@@ -146,7 +146,15 @@ function getRecords_(fromText, toText, sourceSpreadsheet) {
     if (!current || normaliseDate_(row[2]).getTime() > normaliseDate_(current[2]).getTime()) selectedMap[key] = row;
   });
   const selected = Object.values(selectedMap);
-  const ids = new Set(selected.map(row => String(row[0])));
+  let ids = new Set(selected.map(row => String(row[0])));
+  if (latestInventoryOnly) {
+    const latestByBag = {};
+    selected.forEach(row => {
+      const bag = String(row[7]);
+      if (!latestByBag[bag] || normaliseDate_(row[2]).getTime() > normaliseDate_(latestByBag[bag][2]).getTime()) latestByBag[bag] = row;
+    });
+    ids = new Set(Object.values(latestByBag).map(row => String(row[0])));
+  }
   const itemRows = dataRows_(checkSheet, 18).filter(row => ids.has(String(row[0])));
   const quantitiesById = {};
   itemRows.forEach(row => {
