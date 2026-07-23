@@ -1,4 +1,4 @@
-import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, recordLowItems, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
+✓×▣·✓×⚠›✎›✓×–＋×··✓×✓import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, recordLowItems, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
 import { apiConfigured, fetchDashboard, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
