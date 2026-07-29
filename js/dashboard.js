@@ -1,11 +1,12 @@
 import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
-import { apiConfigured, fetchDashboard, saveRestockResolution, syncPendingInspections, syncPendingRestockActions } from "./api.js";
+import { apiConfigured, fetchDashboard, fetchFindings, saveRestockResolution, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
 let weekDays=[]; let now=new Date(); let today="";
 const shortDay=["Isn","Sel","Rab","Kha","Jum","Sab","Ahd"];
 let records=loadRecords(); let findings=loadFindings(); let connectionMessage="";
+let fullFindingsFetchedAt=0;
 
 function refreshDateWindow(){
   const previous=today;
@@ -129,21 +130,31 @@ async function runRefresh(){
   if(!apiConfigured()){ connectionMessage="Google Sheet belum disambungkan."; render(); return; }
   const inspectionSync=syncPendingInspections().catch(()=>({synced:0})); syncPendingRestockActions().catch(()=>{});
   const from=isoDate(weekDays[0]); const to=isoDate(weekDays[6]);
-  const dashboardResult=await fetchDashboard(from,to).then(value=>({ok:true,value})).catch(error=>({ok:false,error}));
+  const fullFindingsDue=Date.now()-fullFindingsFetchedAt>=15000;
+  const fullFindingsRequest=fullFindingsDue
+    ? fetchFindings("2000-01-01","2100-12-31").then(value=>({ok:true,value})).catch(error=>({ok:false,error}))
+    : Promise.resolve(null);
+  const [dashboardResult,fullFindingsResult]=await Promise.all([
+    fetchDashboard(from,to).then(value=>({ok:true,value})).catch(error=>({ok:false,error})),
+    fullFindingsRequest,
+  ]);
   if(dashboardResult.ok){
-    await consolidateRemoteShortages(dashboardResult.value.findings);
     dashboardResult.value.records.forEach(record=>{ if(record.quantities) saveLatestInventory(record); });
     records=reconcileRemoteRecords(dashboardResult.value.records,from,to);
   }
   const sourceRecords=records.filter(record=>record.date>=from&&record.date<=to);
-  findings=dashboardResult.ok
-    ? mergeFindings(dashboardResult.value.findings,sourceRecords,true)
-    : mergeFindings([],sourceRecords,false);
+  if(fullFindingsResult?.ok){
+    await consolidateRemoteShortages(fullFindingsResult.value);
+    findings=mergeFindings(fullFindingsResult.value,sourceRecords,true);
+    fullFindingsFetchedAt=Date.now();
+  }else{
+    findings=mergeFindings([],sourceRecords,false);
+  }
   saveFindings(findings);
   connectionMessage=dashboardResult.ok?"":"Paparan menggunakan rekod peranti. Sambungan akan dicuba semula.";
   render();
   const syncResult=await inspectionSync;
-  if(syncResult.synced) setTimeout(refresh,0);
+  if(syncResult.synced){ fullFindingsFetchedAt=0; setTimeout(refresh,0); }
 }
 
 restockModal.addEventListener("click",async event=>{

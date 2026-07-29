@@ -1,4 +1,4 @@
-const APP_VERSION = '2.6.5';
+const APP_VERSION = '2.6.6';
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
