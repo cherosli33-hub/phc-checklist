@@ -1,4 +1,4 @@
-const APP_VERSION = '2.5.9';
+const APP_VERSION = '2.6.4';
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
@@ -98,11 +98,24 @@ function saveInspection_(record, clientVersion) {
     ]);
     appendRows_(checkSheet, checkRows);
 
-    const findingRows = items.filter(item => item.qty < item.standard).map((item, index) => [
-      `${checked.id}-F${String(index + 1).padStart(3, '0')}`, checked.id, date, monthName,
-      monthNumber, date.getFullYear(), `${checked.bag} / ${checked.shift}`, item.name,
-      item.qty, item.standard, '', '', '', 'Belum diambil tindakan',
-    ]);
+    const activeShortages = consolidateOpenRestockFindings_(findingSheet);
+    const findingRows = [];
+    items.filter(item => item.qty < item.standard).forEach((item, index) => {
+      const activeKey = restockIdentity_(checked.bag, item.name);
+      const active = activeShortages[activeKey];
+      if (active) {
+        // Kekalkan tarikh/ID penemuan asal untuk audit, tetapi guna kuantiti semasa.
+        findingSheet.getRange(active.row, 9, 1, 2).setValues([[item.qty, item.standard]]);
+        return;
+      }
+      const row = [
+        `${checked.id}-F${String(index + 1).padStart(3, '0')}`, checked.id, date, monthName,
+        monthNumber, date.getFullYear(), `${checked.bag} / ${checked.shift}`, item.name,
+        item.qty, item.standard, '', '', '', 'Belum diambil tindakan',
+      ];
+      findingRows.push(row);
+      activeShortages[activeKey] = {row: findingSheet.getLastRow() + findingRows.length, id:row[0]};
+    });
     if (checked.notes) {
       findingRows.push([
         `${checked.id}-NOTE`, checked.id, date, monthName, monthNumber, date.getFullYear(),
@@ -383,6 +396,58 @@ function deleteRowsByValue_(sheet, column, value) {
     else groups.push({start:row, count:1});
   });
   groups.reverse().forEach(group => sheet.deleteRows(group.start, group.count));
+}
+
+function restockIdentity_(bag, itemName) {
+  return `${safeText_(bag, 20).toLowerCase()}|${safeText_(itemName, 160).toLowerCase()}`;
+}
+
+function bagFromBagShift_(bagShift) {
+  return safeText_(bagShift, 60).split('/')[0].trim();
+}
+
+/**
+ * Pastikan hanya satu penemuan restock aktif bagi setiap Beg PHC + Nama Item.
+ * Rekod pendua tidak dipadam: ia ditanda "Telah diambil maklum" untuk jejak audit.
+ */
+function consolidateOpenRestockFindings_(sheet) {
+  const rows = dataRows_(sheet, 14);
+  const active = {};
+  const duplicates = [];
+  rows.forEach((row, index) => {
+    if (!row[0] || String(row[7]) === 'Catatan pengguna' || String(row[13]) !== 'Belum diambil tindakan') return;
+    const key = restockIdentity_(bagFromBagShift_(row[6]), row[7]);
+    if (!active[key]) {
+      active[key] = {row:index + 2, id:String(row[0])};
+      return;
+    }
+    duplicates.push({row:index + 2, canonicalId:active[key].id});
+  });
+  if (duplicates.length) {
+    const now = new Date();
+    duplicates.forEach(duplicate => {
+      sheet.getRange(duplicate.row, 11, 1, 4).setValues([[
+        `Digabungkan dengan penemuan aktif ${duplicate.canonicalId}`,
+        now,
+        sheet.getRange(duplicate.row, 13).getValue(),
+        'Telah diambil maklum',
+      ]]);
+      sheet.getRange(duplicate.row, 12).setNumberFormat('yyyy-mm-dd HH:mm');
+    });
+  }
+  return active;
+}
+
+/** Jalankan sekali untuk membersihkan penemuan restock pendua sedia ada. */
+function consolidateOpenRestockFindings() {
+  const spreadsheet = getSpreadsheet_();
+  const sheet = requiredSheet_(spreadsheet, SHEETS.findings);
+  const before = dataRows_(sheet, 14).filter(row =>
+    row[0] && String(row[7]) !== 'Catatan pengguna' && String(row[13]) === 'Belum diambil tindakan'
+  ).length;
+  const active = consolidateOpenRestockFindings_(sheet);
+  SpreadsheetApp.flush();
+  return `Pembersihan selesai: ${before} rekod aktif menjadi ${Object.keys(active).length} item unik.`;
 }
 function rewriteData_(sheet, columns, rows) { const existing=Math.max(0,sheet.getLastRow()-1); if(existing) sheet.getRange(2,1,existing,Math.max(columns,sheet.getLastColumn())).clearContent(); if(rows.length) sheet.getRange(2,1,rows.length,columns).setValues(rows.map(row=>row.slice(0,columns))); }
 function safeText_(value, max) { return String(value == null ? '' : value).replace(/[\u0000-\u001F\u007F]/g,' ').trim().slice(0,max); }

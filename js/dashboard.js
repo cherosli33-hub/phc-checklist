@@ -1,4 +1,4 @@
-import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, recordLowItems, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
+import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
 import { apiConfigured, fetchDashboard, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
@@ -19,9 +19,7 @@ function latestUniqueRecords(items){ const seen=new Set(); return [...items].sor
 function statusIcon(done){ return `<span class="state-dot ${done?"done":"missing"}">${done?"\u2713":"\u00d7"}</span>`; }
 function weekStatus(date){ const dateKey=isoDate(date); if(date>now) return "pending"; return records.some(record=>record.date===dateKey)?"done":"missing"; }
 function esc(value=""){ return String(value).replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])); }
-function shortageKey(record,item){ return `${record.id}|${item.name}`; }
 function noteActionKey(finding){ return `NOTE|${finding.id}`; }
-function newestRecord(items){ return items.filter(Boolean).sort((a,b)=>recordTimestamp(b)-recordTimestamp(a))[0]; }
 function noteFinding(record){ return {id:`${record.id}-NOTE`,inspectionId:record.id,date:record.date,bagShift:`${record.bag} / ${record.shift}`,note:record.notes,action:"",actionAt:"",status:"Belum diambil tindakan"}; }
 function mergeFindings(remoteFindings,sourceRecords=[],remoteIsAuthoritative=true){
   const base=remoteIsAuthoritative?(remoteFindings||[]):loadFindings();
@@ -32,33 +30,38 @@ function mergeFindings(remoteFindings,sourceRecords=[],remoteIsAuthoritative=tru
   return [...merged.values()];
 }
 
-function shortageFinding(record,item){
-  return findings.find(finding=>finding.type==="shortage"&&finding.inspectionId===record.id&&finding.item===item.name);
-}
-
 function currentLowItems(){
-  // Sheet ialah sumber utama: findingId sentiasa ID sebenar dari PENEMUAN,
-  // dan SEMUA shift yang belum diambil tindakan disenaraikan (bukan shift terbaru sahaja).
+  // Satu item aktif sahaja bagi setiap beg, walaupun ia disalin ke tarikh atau shift lain.
+  // Semua findingId dikekalkan supaya tindakan restock menyelesaikan rekod pendua lama juga.
   const actions=loadRestockActions();
-  return findings
+  const grouped=new Map();
+  findings
     .filter(finding=>finding.type==="shortage"&&finding.status==="Belum diambil tindakan")
-    .map(finding=>{
+    .forEach(finding=>{
       const parts=String(finding.bagShift||"").split(" / ");
-      return {name:finding.item,qty:finding.qty,standard:finding.standard,
-        bag:parts[0]||"",shift:parts[1]||"",date:finding.date,recordId:finding.inspectionId,
-        findingId:finding.id,findingStatus:finding.status,
-        key:`${finding.inspectionId}|${finding.item}`};
-    })
-    // hanya sembunyi jika tindakan BENAR-BENAR sudah sampai ke Sheet
-    .filter(item=>actions[item.key]?.syncStatus!=="SYNCED");
+      const bag=(parts[0]||"").trim(); const shift=(parts[1]||"").trim();
+      const uniqueKey=`${bag.toLocaleLowerCase("ms-MY")}|${String(finding.item||"").trim().toLocaleLowerCase("ms-MY")}`;
+      const current=grouped.get(uniqueKey);
+      const candidate={name:finding.item,qty:finding.qty,standard:finding.standard,
+        bag,shift,date:finding.date,recordId:finding.inspectionId,
+        findingId:finding.id,findingIds:[finding.id],findingStatus:finding.status,key:uniqueKey};
+      if(!current){ grouped.set(uniqueKey,candidate); return; }
+      current.findingIds.push(finding.id);
+      if(`${finding.date}|${finding.id}`>=`${current.date}|${current.findingId}`){
+        Object.assign(current,{name:finding.item,qty:finding.qty,standard:finding.standard,
+          shift,date:finding.date,recordId:finding.inspectionId,findingId:finding.id});
+      }
+    });
+  return [...grouped.values()].filter(item=>
+    item.findingIds.some(findingId=>actions[`RESTOCK|${findingId}`]?.syncStatus!=="SYNCED")
+  );
 }
 
 function render(){
   const unique=latestUniqueRecords(records); const todayRecords=unique.filter(record=>record.date===today);
   const completed=new Set(todayRecords.map(record=>`${record.bag}-${record.shift}`));
   const expected=[...SHIFTS.map(shift=>`PHC 1-${shift}`),...SHIFTS.map(shift=>`PHC 2-${shift}`)];
-  const next=expected.find(key=>!completed.has(key)); const savedLatest=loadLatestInventory();
-  const latestInventory=["PHC 1","PHC 2"].map(bag=>newestRecord([savedLatest[bag],...unique.filter(record=>record.bag===bag&&record.quantities)])).filter(Boolean);
+  const next=expected.find(key=>!completed.has(key));
   const actions=loadRestockActions();
   const lowItems=currentLowItems();
   const pendingNotes=findings.filter(finding=>finding.type!=="shortage"&&finding.note&&finding.status==="Belum diambil tindakan"&&!actions[noteActionKey(finding)]);
@@ -138,7 +141,9 @@ restockModal.addEventListener("click",async event=>{
   if(!confirm("Semua item yang disenaraikan telah ditambah ke dalam beg?")) return;
   button.disabled=true; button.textContent="Menyimpan...";
   const latest=loadLatestInventory(); const stamp=new Date().toISOString();
-  const activeItems=currentLowItems().map(item=>({key:item.key,findingId:item.findingId}));
+  const activeItems=currentLowItems().flatMap(item=>item.findingIds.map(findingId=>({
+    key:`RESTOCK|${findingId}`,findingId
+  })));
   activeItems.forEach(({key,findingId})=>saveRestockAction(key,"Semua stok telah ditambah",{findingId,syncStatus:"PENDING"}));
   Object.values(latest).forEach(record=>{ const copy=structuredClone(record); Object.values(copy.quantities||{}).forEach(group=>(group.items||[]).forEach(item=>{ if(item.qty<item.standard) item.qty=item.standard; })); copy.savedAt=stamp; saveLatestInventory(copy); });
   restockModal.hidden=true; connectionMessage="Stok dikemas kini. Menghantar tindakan ke Google Sheet..."; render();
