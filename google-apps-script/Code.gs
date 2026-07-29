@@ -1,4 +1,4 @@
-const APP_VERSION = '2.6.6';
+const APP_VERSION = '2.6.7';
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
@@ -399,7 +399,11 @@ function deleteRowsByValue_(sheet, column, value) {
 }
 
 function restockIdentity_(bag, itemName) {
-  return `${safeText_(bag, 20).toLowerCase()}|${safeText_(itemName, 160).toLowerCase()}`;
+  return `${normaliseIdentityText_(bag, 20)}|${normaliseIdentityText_(itemName, 160)}`;
+}
+
+function normaliseIdentityText_(value, max) {
+  return safeText_(value, max).toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 function bagFromBagShift_(bagShift) {

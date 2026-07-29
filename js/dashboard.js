@@ -1,4 +1,4 @@
-import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
+import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, normalizeKey, reconcileRemoteRecords, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
 import { apiConfigured, fetchDashboard, fetchFindings, saveRestockResolution, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
@@ -41,7 +41,7 @@ function currentLowItems(){
     .forEach(finding=>{
       const parts=String(finding.bagShift||"").split(" / ");
       const bag=(parts[0]||"").trim(); const shift=(parts[1]||"").trim();
-      const uniqueKey=`${bag.toLocaleLowerCase("ms-MY")}|${String(finding.item||"").trim().toLocaleLowerCase("ms-MY")}`;
+      const uniqueKey=`${normalizeKey(bag)}|${normalizeKey(finding.item)}`;
       const current=grouped.get(uniqueKey);
       const candidate={name:finding.item,qty:finding.qty,standard:finding.standard,
         bag,shift,date:finding.date,recordId:finding.inspectionId,
@@ -63,8 +63,8 @@ async function consolidateRemoteShortages(remoteFindings){
   (remoteFindings||[])
     .filter(finding=>finding.type==="shortage"&&finding.status==="Belum diambil tindakan")
     .forEach(finding=>{
-      const bag=String(finding.bagShift||"").split(" / ")[0].trim().toLocaleLowerCase("ms-MY");
-      const key=`${bag}|${String(finding.item||"").trim().toLocaleLowerCase("ms-MY")}`;
+      const bag=normalizeKey(String(finding.bagShift||"").split(" / ")[0]);
+      const key=`${bag}|${normalizeKey(finding.item)}`;
       const group=grouped.get(key)||[]; group.push(finding); grouped.set(key,group);
     });
   const duplicates=[];
