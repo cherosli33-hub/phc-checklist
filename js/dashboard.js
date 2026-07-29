@@ -1,5 +1,5 @@
 import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, reconcileRemoteRecords, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
-import { apiConfigured, fetchDashboard, syncPendingInspections, syncPendingRestockActions } from "./api.js";
+import { apiConfigured, fetchDashboard, saveRestockResolution, syncPendingInspections, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
@@ -57,6 +57,31 @@ function currentLowItems(){
   );
 }
 
+async function consolidateRemoteShortages(remoteFindings){
+  const grouped=new Map();
+  (remoteFindings||[])
+    .filter(finding=>finding.type==="shortage"&&finding.status==="Belum diambil tindakan")
+    .forEach(finding=>{
+      const bag=String(finding.bagShift||"").split(" / ")[0].trim().toLocaleLowerCase("ms-MY");
+      const key=`${bag}|${String(finding.item||"").trim().toLocaleLowerCase("ms-MY")}`;
+      const group=grouped.get(key)||[]; group.push(finding); grouped.set(key,group);
+    });
+  const duplicates=[];
+  grouped.forEach(group=>{
+    group.sort((a,b)=>`${a.date}|${a.id}`.localeCompare(`${b.date}|${b.id}`));
+    const canonical=group[0];
+    group.slice(1).forEach(finding=>duplicates.push({finding,canonical}));
+  });
+  for(const {finding,canonical} of duplicates){
+    try{
+      const action=`Digabungkan dengan penemuan aktif ${canonical.id} kerana item dan beg PHC yang sama.`;
+      await saveRestockResolution(finding.id,action,"Telah diambil maklum");
+      Object.assign(finding,{status:"Telah diambil maklum",action});
+    }catch{}
+  }
+  return duplicates.length;
+}
+
 function render(){
   const unique=latestUniqueRecords(records); const todayRecords=unique.filter(record=>record.date===today);
   const completed=new Set(todayRecords.map(record=>`${record.bag}-${record.shift}`));
@@ -106,6 +131,7 @@ async function runRefresh(){
   const from=isoDate(weekDays[0]); const to=isoDate(weekDays[6]);
   const dashboardResult=await fetchDashboard(from,to).then(value=>({ok:true,value})).catch(error=>({ok:false,error}));
   if(dashboardResult.ok){
+    await consolidateRemoteShortages(dashboardResult.value.findings);
     dashboardResult.value.records.forEach(record=>{ if(record.quantities) saveLatestInventory(record); });
     records=reconcileRemoteRecords(dashboardResult.value.records,from,to);
   }
