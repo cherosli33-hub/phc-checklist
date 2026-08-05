@@ -1,5 +1,5 @@
 import { APP_VERSION } from "./config.js";
-import { apiConfigured, syncPendingInspections } from "./api.js";
+import { apiConfigured, startBackgroundSync, syncPendingInspections } from "./api.js";
 import { LATEST_INVENTORY_KEY, PENDING_SYNC_KEY, STORAGE_KEY, loadPendingSync } from "./app.js";
 
 const modal=document.querySelector("#settingsModal"); const status=document.querySelector("#syncStatus");
@@ -20,4 +20,5 @@ async function showStatus(){
   status.className=`sync-card ${result.pending?"pending":"connected"}`;
   status.innerHTML=`<strong>${result.pending?"Ada rekod menunggu sync":"Google Sheet tersambung"}</strong><p>${result.synced} rekod baru dihantar · ${result.pending} masih menunggu.</p>`;
 }
+startBackgroundSync();
 showStatus();
