@@ -1,4 +1,4 @@
-const APP_VERSION = '2.6.7';
+const APP_VERSION = '2.6.8';
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const SHEETS = Object.freeze({
   inspections: 'PEMERIKSAAN',
@@ -87,7 +87,7 @@ function saveInspection_(record, clientVersion) {
       deleteRowsByValue_(findingSheet, 2, oldId);
       inspectionSheet.getRange(existing, 1, 1, inspectionRow.length).setValues([inspectionRow]);
     } else {
-      inspectionSheet.appendRow(inspectionRow);
+      appendRows_(inspectionSheet, [inspectionRow]);
     }
 
     const checkRows = items.map(item => [

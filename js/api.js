@@ -67,6 +67,7 @@ async function sendInspection(record){
     const data=await request(APPS_SCRIPT_URL,{
           method:"POST",
           headers:{"Content-Type":"text/plain;charset=utf-8"},
+          keepalive:true,
           body:JSON.stringify({action:"saveInspection",appVersion:APP_VERSION,record}),
     });
     return {...record,syncStatus:"SYNCED",serverSavedAt:data.savedAt||record.savedAt};
@@ -80,8 +81,8 @@ export async function saveInspection(record){
           cached.unshift({id:`${prepared.id}-NOTE`,inspectionId:prepared.id,date:prepared.date,bagShift:`${prepared.bag} / ${prepared.shift}`,note:prepared.notes,action:"",actionAt:"",status:"Belum diambil tindakan"});
           saveFindings(cached);
     }
-    if(configured() && navigator.onLine) syncPendingInspections().catch(()=>{});
-    return {record:prepared,synced:false,message:"Rekod disimpan. Sync Google Sheet berjalan di belakang."};
+    requestBackgroundSync();
+    return {record:prepared,synced:false,message:"Rekod pemeriksaan telah disimpan dengan selamat."};
 }
 
 let restockSyncPromise=null;
@@ -123,27 +124,69 @@ export function syncPendingInspections(){
 }
 
 async function runInspectionSync(){
-    if(!configured() || !navigator.onLine) return {synced:0,pending:loadPendingSync().length};
-    let synced=0; const queue=[...loadPendingSync()];
+    if(!configured()) return {synced:0,pending:loadPendingSync().length,lastError:"Google Sheet belum disambungkan."};
+    let synced=0; let lastError=""; const queue=[...loadPendingSync()];
     for(const record of queue){
-          if(!navigator.onLine) break;
           try{
                   const saved=await sendInspection(record); upsertLocalRecord(saved); saveLatestInventory(saved);
                   savePendingSync(loadPendingSync().filter(item=>item.id!==record.id)); synced+=1;
-          }catch{
+          }catch(error){
+                  lastError=error.message||String(error);
                   // Rekod lama mungkin sudah berada dalam Sheet tetapi respons sync terdahulu
-            // tidak sempat diterima oleh telefon. Sahkan melalui checkKey sebelum membuangnya.
+            // tidak sempat diterima oleh peranti. Sahkan menggunakan ID unik; checkKey tidak
+            // cukup selamat kerana peranti lain boleh menyimpan rekod yang lebih baharu.
             try{
                       const remote=await fetchRecords(record.date,record.date);
-                      const existing=remote.find(item=>item.checkKey===record.checkKey);
-                      const remoteTime=new Date(existing?.savedAt||0).getTime();
-                      const localTime=new Date(record.savedAt||0).getTime();
-                      if(existing && remoteTime>=localTime){
+                      const existing=remote.find(item=>item.id===record.id);
+                      if(existing){
                                   upsertLocalRecord(existing); if(existing.quantities) saveLatestInventory(existing);
                                   savePendingSync(loadPendingSync().filter(item=>item.id!==record.id)); synced+=1;
                       }
             }catch{}
           }
     }
-    return {synced,pending:loadPendingSync().length};
+    return {synced,pending:loadPendingSync().length,lastError};
+}
+
+const BACKGROUND_IDLE_MS=20000;
+const BACKGROUND_RETRY_MIN_MS=2500;
+const BACKGROUND_RETRY_MAX_MS=60000;
+let backgroundStarted=false;
+let backgroundRunning=false;
+let backgroundTimer=0;
+let backgroundRetryMs=BACKGROUND_RETRY_MIN_MS;
+
+function scheduleBackgroundSync(delay=0){
+    clearTimeout(backgroundTimer);
+    backgroundTimer=setTimeout(runBackgroundSync,Math.max(0,delay));
+}
+
+async function runBackgroundSync(){
+    if(backgroundRunning){ scheduleBackgroundSync(BACKGROUND_RETRY_MIN_MS); return; }
+    backgroundRunning=true;
+    let inspectionResult={synced:0,pending:loadPendingSync().length};
+    let restockResult={synced:0,pending:0};
+    try{
+          inspectionResult=await syncPendingInspections().catch(error=>({synced:0,pending:loadPendingSync().length,lastError:error.message||String(error)}));
+          restockResult=await syncPendingRestockActions().catch(error=>({synced:0,pending:0,lastError:error.message||String(error)}));
+          const pending=inspectionResult.pending+restockResult.pending;
+          const synced=inspectionResult.synced+restockResult.synced;
+          if(synced && typeof window!=="undefined") window.dispatchEvent(new CustomEvent("phc:background-synced",{detail:{synced,pending}}));
+          backgroundRetryMs=pending?Math.min(BACKGROUND_RETRY_MAX_MS,backgroundRetryMs*2):BACKGROUND_RETRY_MIN_MS;
+          scheduleBackgroundSync(pending?backgroundRetryMs:BACKGROUND_IDLE_MS);
+    } finally { backgroundRunning=false; }
+}
+
+export function requestBackgroundSync(){
+    if(!configured()) return;
+    scheduleBackgroundSync(0);
+}
+
+export function startBackgroundSync(){
+    if(backgroundStarted || typeof window==="undefined") return;
+    backgroundStarted=true;
+    const resume=()=>scheduleBackgroundSync(0);
+    ["online","focus","pageshow"].forEach(name=>window.addEventListener(name,resume));
+    document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") resume(); });
+    resume();
 }

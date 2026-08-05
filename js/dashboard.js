@@ -1,5 +1,5 @@
 import { SHIFTS, formatDate, getWeekDays, isoDate, loadFindings, loadLatestInventory, loadPendingSync, loadRecords, loadRestockActions, normalizeKey, reconcileRemoteRecords, saveFindings, saveLatestInventory, saveRestockAction } from "./app.js";
-import { apiConfigured, fetchDashboard, fetchFindings, saveRestockResolution, syncPendingInspections, syncPendingRestockActions } from "./api.js";
+import { apiConfigured, fetchDashboard, fetchFindings, saveRestockResolution, startBackgroundSync, syncPendingRestockActions } from "./api.js";
 
 const content=document.querySelector("#dashboardContent");
 const restockModal=document.querySelector("#restockModal");
@@ -91,10 +91,9 @@ function render(){
   const actions=loadRestockActions();
   const lowItems=currentLowItems();
   const pendingNotes=findings.filter(finding=>finding.type!=="shortage"&&finding.note&&finding.status==="Belum diambil tindakan"&&!actions[noteActionKey(finding)]);
-  const pending=loadPendingSync().length;
   const bagCard=bag=>`<article class="card bag-card"><div class="bag-title"><span class="bag-badge">\u25a3</span><h3>Beg ${bag}</h3></div><div class="shift-list">${SHIFTS.map(shift=>`<div class="shift-row"><span>${shift}</span>${statusIcon(completed.has(`${bag}-${shift}`))}</div>`).join("")}</div></article>`;
   content.innerHTML=`
-    ${pending||connectionMessage?`<div class="connection-banner ${pending?"pending":"info"}"><strong>${pending?`${pending} rekod menunggu sync`:"Status sambungan"}</strong><span>${esc(connectionMessage||"Rekod akan dihantar semula apabila internet tersedia.")}</span></div>`:""}
+    ${!apiConfigured()?`<div class="connection-banner info"><strong>Status sambungan</strong><span>Google Sheet belum disambungkan.</span></div>`:""}
     <section class="date-line"><div><p class="eyebrow">HARI INI</p><h1>${formatDate(now,{weekday:"long",day:"numeric",month:"long"})}</h1></div><span class="live-time" id="liveTime"></span></section>
     <section class="card next-card"><span class="label">TINDAKAN SETERUSNYA</span>${next?`<h2>${next.replace("-"," \u00b7 Shift ")}</h2><p>Pemeriksaan ini masih belum dilengkapkan.</p>`:`<h2>Semua pemeriksaan lengkap</h2><p>Semua beg dan shift sudah disemak hari ini.</p>`}</section>
     <section class="card status-summary"><div class="section-head"><h2>Status Hari Ini</h2><span class="state-dot ${completed.size===6?"done":"pending"}">${completed.size===6?"\u2713":"!"}</span></div><div class="progress-row"><div class="progress-ring" style="--progress:${Math.round(completed.size/6*100)}%"><strong>${completed.size}/6</strong></div><div class="progress-copy"><strong>${completed.size} pemeriksaan selesai</strong><small>2 beg \u00d7 3 shift setiap hari</small></div></div></section>
@@ -128,7 +127,7 @@ function refresh(){
 async function runRefresh(){
   refreshDateWindow();
   if(!apiConfigured()){ connectionMessage="Google Sheet belum disambungkan."; render(); return; }
-  const inspectionSync=syncPendingInspections().catch(()=>({synced:0})); syncPendingRestockActions().catch(()=>{});
+  syncPendingRestockActions().catch(()=>{});
   const from=isoDate(weekDays[0]); const to=isoDate(weekDays[6]);
   const fullFindingsDue=Date.now()-fullFindingsFetchedAt>=15000;
   const fullFindingsRequest=fullFindingsDue
@@ -153,8 +152,6 @@ async function runRefresh(){
   saveFindings(findings);
   connectionMessage=dashboardResult.ok?"":"Paparan menggunakan rekod peranti. Sambungan akan dicuba semula.";
   render();
-  const syncResult=await inspectionSync;
-  if(syncResult.synced){ fullFindingsFetchedAt=0; setTimeout(refresh,0); }
 }
 
 restockModal.addEventListener("click",async event=>{
@@ -197,5 +194,7 @@ window.addEventListener("pageshow",resumeRefresh);
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") resumeRefresh(); });
 render();
 setInterval(updateClock,30000);
-setInterval(()=>{ if(document.visibilityState==="visible") refresh(); },5000);
+setInterval(()=>{ if(document.visibilityState==="visible") refresh(); },10000);
+window.addEventListener("phc:background-synced",()=>{ fullFindingsFetchedAt=0; refresh(); });
+startBackgroundSync();
 refresh();
